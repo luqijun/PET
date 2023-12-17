@@ -75,7 +75,8 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
-    parser.add_argument('--eval_freq', default=5, type=int)
+    parser.add_argument('--eval_start', default=350, type=int)
+    parser.add_argument('--eval_freq', default=1, type=int)
     parser.add_argument('--syn_bn', default=0, type=int)
 
     # distributed training parameters
@@ -209,7 +210,7 @@ def main(args):
                 f.write(json.dumps(log_stats) + "\n")
 
         # evaluation
-        if epoch % args.eval_freq == 0 and epoch > 0:
+        if epoch > args.eval_start and epoch % args.eval_freq == 0 and epoch > 0:
             t1 = time.time()
             test_stats = evaluate(model, data_loader_val, device, epoch, None)
             t2 = time.time()

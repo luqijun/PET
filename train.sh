@@ -3,6 +3,7 @@ python -m torch.distributed.launch \
     --nproc_per_node=1 \
     --master_port=10001 \
     --use_env main.py \
+    --batch_size=8 \
     --lr=0.0001 \
     --backbone="vgg16_bn" \
     --ce_loss_coef=1.0 \
@@ -13,7 +14,8 @@ python -m torch.distributed.launch \
     --dim_feedforward=512 \
     --nheads=8 \
     --dropout=0.0 \
-    --epochs=1500 \
+    --epochs=1000 \
     --dataset_file="SHA" \
-    --eval_freq=5 \
+    --eval_start=100 \
+    --eval_freq=1 \
     --output_dir='pet_model'
