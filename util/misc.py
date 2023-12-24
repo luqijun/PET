@@ -13,6 +13,7 @@ from typing import Optional, List
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch import Tensor
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
@@ -411,3 +412,56 @@ def init_distributed_mode(args):
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
+
+
+
+
+
+
+split_arr = [  1.1380713,  21.38292503, 31.66410828, 43.25484467, 58.92156754,
+   84.78318024, 127.82445984, 186.44572449, 259.66723633] # , 358.77459717
+
+# 构造标签的代码
+def generate_level_label(points, H, W):
+    num_classes = len(split_arr)
+    den_level_map = compute_image_density_levels(points, H, W)
+    den_level_label = torch.searchsorted(torch.Tensor(split_arr).cuda(), den_level_map)
+    return den_level_label
+
+# 构造one-hot标签的代码
+# def construct_one_hot_labels(num_classes, H, W):
+#     labels = torch.randint(0, num_classes, size=(H, W))
+#     one_hot_labels = F.one_hot(labels, num_classes=num_classes)
+#     return one_hot_labels
+
+
+def compute_image_density_levels(points, H, W, nearst_points=4):
+    """
+    Compute crowd density:
+        - defined as the average nearest distance between ground-truth points
+    """
+    y = torch.arange(0, H)
+    x = torch.arange(0, W)
+    grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
+    grid_points = torch.vstack([grid_y.flatten(), grid_x.flatten()]).permute(1,0).float().cuda()
+    points_tensor = points.float().cuda()
+
+    dist = torch.cdist(grid_points, points_tensor, p=2)
+
+    if points_tensor.shape[0] > 1:
+        nearest_num = min(points_tensor.shape[0], nearst_points)
+
+        if len(grid_points) > 300000:
+            dens=[]
+            chunks = torch.chunk(dist, 4)
+            for chunk in chunks:
+                den =  chunk.sort(dim=1)[0][:, 0:nearest_num].mean(dim=1)
+                dens.append(den)
+            density = torch.cat(dens, dim=0).cpu().reshape(H, W).numpy()
+        else:
+            density = dist.sort(dim=1)[0][:, 0:nearest_num].mean(dim=1).reshape(H, W)
+    else:
+        density = torch.full((H, W), fill_value=999.0).cuda()
+        # density = torch.tensor(999.0).reshape(-1)
+
+    return density

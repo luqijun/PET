@@ -59,6 +59,8 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--vis_dir', default="")
     parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--num_levels', default=10, type=int,
+                        help='number of density levels')
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,

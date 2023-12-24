@@ -75,9 +75,11 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
-    parser.add_argument('--eval_start', default=350, type=int)
+    parser.add_argument('--eval_start', default=150, type=int)
     parser.add_argument('--eval_freq', default=1, type=int)
     parser.add_argument('--syn_bn', default=0, type=int)
+    parser.add_argument('--num_levels', default=10, type=int,
+                        help='number of density levels')
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
