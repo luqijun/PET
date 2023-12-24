@@ -200,6 +200,7 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
                 'best_mae': best_mae,
+                'best_epoch': best_epoch,
             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
