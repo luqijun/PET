@@ -20,6 +20,7 @@ class BasePETCount(nn.Module):
     """
     def __init__(self, backbone, num_classes, quadtree_layer='sparse', args=None, **kwargs):
         super().__init__()
+        self.args = args
         self.backbone = backbone
         self.transformer = kwargs['transformer']
         hidden_dim = args.hidden_dim
@@ -103,10 +104,11 @@ class BasePETCount(nn.Module):
         # dynamic point query generation
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
+        split_middle = self.args.num_levels // 2
         if dec_win_w==16:
-            valid_div = (div_win > 5).sum(dim=0)[:,0]
+            valid_div = (div_win > split_middle).sum(dim=0)[:,0]
         else:
-            valid_div = (div_win <= 5).sum(dim=0)[:, 0]
+            valid_div = (div_win <= split_middle).sum(dim=0)[:, 0]
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
@@ -183,7 +185,7 @@ class PET(nn.Module):
     def __init__(self, backbone, num_classes, args=None):
         super().__init__()
         self.backbone = backbone
-        
+        self.args = args
         # positional embedding
         self.pos_embed = build_position_encoding(args)
 
@@ -319,7 +321,7 @@ class PET(nn.Module):
             # 计算等级标签
             img_h, img_w = samples.tensors.shape[-2:]
             for dic in kwargs['targets']:
-                level_label = generate_level_label(dic['points'], img_h, img_w)
+                level_label = generate_level_label(dic['points'], img_h, img_w, self.args.num_nearest_points, self.args.num_levels)
                 dic['level_label'] = level_label
                 dic['level_label_4x'] = \
                 F.interpolate(level_label[None, None].float(), size=features['4x'].tensors.shape[-2:])[0][0].int()

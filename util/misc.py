@@ -415,16 +415,16 @@ def init_distributed_mode(args):
 
 
 
-
-
-
-split_arr = [  1.1380713,  21.38292503, 31.66410828, 43.25484467, 58.92156754,
+split_arr_4in3_10 = [  1.1380713,  21.38292503, 31.66410828, 43.25484467, 58.92156754,
    84.78318024, 127.82445984, 186.44572449, 259.66723633] # , 358.77459717
 
+from .split_levels import *
+
 # 构造标签的代码
-def generate_level_label(points, H, W):
-    num_classes = len(split_arr)
-    den_level_map = compute_image_density_levels(points, H, W)
+def generate_level_label(points, H, W, num_nearest_points, num_levels):
+    split_arr = eval(f'split_arr_{num_nearest_points}nearest_{num_levels}bin')
+    split_arr = split_arr[1:num_levels]
+    den_level_map = compute_image_density_levels(points, H, W, num_levels)
     den_level_label = torch.searchsorted(torch.Tensor(split_arr).cuda(), den_level_map)
     return den_level_label
 
@@ -435,7 +435,7 @@ def generate_level_label(points, H, W):
 #     return one_hot_labels
 
 
-def compute_image_density_levels(points, H, W, nearst_points=4):
+def compute_image_density_levels(points, H, W, nearst_points):
     """
     Compute crowd density:
         - defined as the average nearest distance between ground-truth points

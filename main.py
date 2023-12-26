@@ -78,6 +78,8 @@ def get_args_parser():
     parser.add_argument('--eval_start', default=150, type=int)
     parser.add_argument('--eval_freq', default=1, type=int)
     parser.add_argument('--syn_bn', default=0, type=int)
+    parser.add_argument('--num_nearest_points', default=4, type=int,
+                        help='number of density levels')
     parser.add_argument('--num_levels', default=10, type=int,
                         help='number of density levels')
 
