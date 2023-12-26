@@ -103,7 +103,10 @@ def load_data(img_gt_path, train):
     img = cv2.imread(img_path)
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]
-    return img, points
+    unique_points = np.unique(points, axis=0)
+    # if unique_points.shape!=points.shape:
+    #     print(f"filter unique points from {points.shape} to {unique_points.shape}====================================================================")
+    return img, unique_points
 
 
 def random_crop(img, points, patch_size=256):
