@@ -37,6 +37,7 @@ def get_args_parser():
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
+
     # - transformer
     parser.add_argument('--dec_layers', default=2, type=int,
                         help="Number of decoding layers in the transformer")
@@ -55,6 +56,11 @@ def get_args_parser():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_point', default=0.05, type=float,
                         help="SmoothL1 point coefficient in the matching cost")
+
+    # - loss split mode
+    parser.add_argument('--loss_mode', default='mode1', type=str, choices=('mode1', 'mode2', 'mode3'),
+                        help="Type of calculate loss")
+
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)

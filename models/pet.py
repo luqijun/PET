@@ -430,7 +430,7 @@ class SetCriterion(nn.Module):
         1) compute hungarian assignment between ground truth points and the outputs of the model
         2) supervise each pair of matched ground-truth / prediction and split map
     """
-    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses, num_levels):
+    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses, args):
         """
         Parameters:
             num_classes: one-class in crowd counting
@@ -440,12 +440,13 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
+        self.args = args
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.losses = losses
-        self.num_levels = num_levels
+        self.num_levels = args.num_levels
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef    # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
@@ -482,13 +483,22 @@ class SetCriterion(nn.Module):
             split_map = kwargs['div'].view(raw_ce_loss.shape[0], -1)
 
             loss_ce = 0
-            for level in range(self.num_levels):
+            levels = []
+            if self.args.loss_mode == 'mode1':
+                levels  = range(0, self.num_levels)
+            elif self.args.loss_mode == 'mode2':
+                levels = range(0, self.num_levels//2) if outputs['pq_stride']==4 else range(self.num_levels//2, self.num_levels)
+            elif self.args.loss_mode == 'mode3':
+                levels = range(0, self.num_levels//2) if outputs['pq_stride']==4 else range(0, self.num_levels)
+
+            for level in levels:
                 div_mask = split_map == level
-                loss_ce_sp = (raw_ce_loss * weights * div_mask)[sp_idx].sum() / ((weights * div_mask)[sp_idx].sum() + eps)
-                loss_ce_ds = (raw_ce_loss * weights * div_mask)[ds_idx].sum() / ((weights * div_mask)[ds_idx].sum() + eps)
+                loss_ce_sp = (raw_ce_loss * weights * div_mask)[sp_idx].sum() / (
+                            (weights * div_mask)[sp_idx].sum() + eps)
+                loss_ce_ds = (raw_ce_loss * weights * div_mask)[ds_idx].sum() / (
+                            (weights * div_mask)[ds_idx].sum() + eps)
                 loss_ce_level = loss_ce_sp + loss_ce_ds
                 loss_ce += loss_ce_level
-
             # div_thrs = self.div_thrs_dict[outputs['pq_stride']]
             # div_mask = split_map > div_thrs
             #
@@ -640,6 +650,6 @@ def build_pet(args):
     weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
     losses = ['labels', 'points']
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                             eos_coef=args.eos_coef, losses=losses, num_levels=args.num_levels)
+                             eos_coef=args.eos_coef, losses=losses, args=args)
     criterion.to(device)
     return model, criterion
