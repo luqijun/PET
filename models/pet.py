@@ -104,11 +104,7 @@ class BasePETCount(nn.Module):
         # dynamic point query generation
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        split_middle = self.args.num_levels // 2
-        if dec_win_w==16:
-            valid_div = (div_win > split_middle).sum(dim=0)[:,0]
-        else:
-            valid_div = (div_win <= split_middle).sum(dim=0)[:, 0]
+        valid_div = (div_win >= 0).sum(dim=0)[:, 0]
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
@@ -219,6 +215,74 @@ class PET(nn.Module):
         transformer = build_decoder(args)
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
+
+    def compute_loss_single(self, outputs, criterion, targets, epoch, samples):
+        """
+        Compute loss, including:
+            - point query loss (Eq. (3) in the paper)
+            - quadtree splitter loss (Eq. (4) in the paper)
+        """
+        output_dense = outputs['dense']
+        weight_dict = criterion.weight_dict
+        warmup_ep = 0
+
+        # compute loss
+        if epoch >= warmup_ep:
+            loss_dict_dense = criterion(output_dense, targets, div=outputs['split_map_level_dense'])
+        else:
+            loss_dict_dense = criterion(output_dense, targets)
+
+
+        # dense point queries loss
+        loss_dict_dense = {k + '_ds': v for k, v in loss_dict_dense.items()}
+        weight_dict_dense = {k + '_ds': v for k, v in weight_dict.items()}
+        loss_pq_dense = sum(
+            loss_dict_dense[k] * weight_dict_dense[k] for k in loss_dict_dense.keys() if k in weight_dict_dense)
+
+        # point queries loss
+        losses = loss_pq_dense
+
+        # update loss dict and weight dict
+        loss_dict = dict()
+        loss_dict.update(loss_dict_dense)
+
+        weight_dict = dict()
+        weight_dict.update(weight_dict_dense)
+
+        # 分割损失
+        split_map = outputs['split_map_raw']
+        bs, num_levels, h, w = split_map.shape
+        split_map = split_map.view(bs, num_levels, -1)
+        tgt_level_map = torch.stack([tgt['level_label_8x'] for tgt in targets], dim=0).view(bs, -1).type(
+            torch.LongTensor).cuda()
+        loss_split = F.cross_entropy(split_map, tgt_level_map, ignore_index=-1)
+
+        # quadtree splitter loss
+        # den = torch.tensor([target['density'] for target in targets])   # crowd density
+        # bs = len(den)
+        # ds_idx = den < 2 * self.quadtree_sparse.pq_stride   # dense regions index
+        # ds_div = outputs['split_map_raw'][ds_idx]
+        # sp_div = 1 - outputs['split_map_raw']
+        #
+        # # constrain sparse regions
+        # loss_split_sp = 1 - sp_div.view(bs, -1).max(dim=1)[0].mean()
+        #
+        # # constrain dense regions
+        # if sum(ds_idx) > 0:
+        #     ds_num = ds_div.shape[0]
+        #     loss_split_ds = 1 - ds_div.view(ds_num, -1).max(dim=1)[0].mean()
+        # else:
+        #     loss_split_ds = outputs['split_map_raw'].sum() * 0.0
+
+        # update quadtree splitter loss
+        # loss_split = loss_split_sp + loss_split_ds
+        weight_split = 0.1 if epoch >= warmup_ep else 0.0
+        loss_dict['loss_split'] = loss_split
+        weight_dict['loss_split'] = weight_split
+
+        # final loss
+        losses += loss_split * weight_split
+        return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
@@ -347,17 +411,6 @@ class PET(nn.Module):
         split_map = self.quadtree_splitter(encode_src)
         _, split_map_level_sparse = torch.max(split_map, dim=1)
         split_map_level_dense = F.interpolate(split_map_level_sparse.float().unsqueeze(1), size=(ds_h, ds_w)).squeeze(1).int()
-
-        # quadtree layer0 forward (sparse)
-        kwargs['div'] = split_map_level_sparse.reshape(bs, sp_h, sp_w)
-        kwargs['dec_win_size'] = [16, 8]
-        outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
-        # if 'train' in kwargs:
-        #     kwargs['div'] = split_map_level_sparse.reshape(bs, sp_h, sp_w)
-        #     kwargs['dec_win_size'] = [16, 8]
-        #     outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
-        # else:
-        #     outputs_sparse = None
         
         # quadtree layer1 forward (dense)
         kwargs['div'] = split_map_level_dense.reshape(bs, ds_h, ds_w)
@@ -372,10 +425,8 @@ class PET(nn.Module):
         
         # format outputs
         outputs = dict()
-        outputs['sparse'] = outputs_sparse
         outputs['dense'] = outputs_dense
         outputs['split_map_raw'] = split_map
-        outputs['split_map_level_sparse'] = split_map_level_sparse
         outputs['split_map_level_dense'] = split_map_level_dense
         return outputs
     
@@ -384,21 +435,13 @@ class PET(nn.Module):
 
         # compute loss
         criterion, targets, epoch = kwargs['criterion'], kwargs['targets'], kwargs['epoch']
-        losses = self.compute_loss(outputs, criterion, targets, epoch, samples)
+        losses = self.compute_loss_single(outputs, criterion, targets, epoch, samples)
         return losses
     
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
-        out_dense, out_sparse = outputs['dense'], outputs['sparse']
-        thrs = 0.5  # inference threshold        
-        
-        # process sparse point queries
-        if outputs['sparse'] is not None:
-            out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            valid_sparse = out_sparse_scores > thrs
-            index_sparse = valid_sparse.cpu()
-        else:
-            index_sparse = None
+        out_dense = outputs['dense']
+        thrs = 0.5  # inference threshold
 
         # process dense point queries
         if outputs['dense'] is not None:
@@ -410,17 +453,12 @@ class PET(nn.Module):
 
         # format output
         div_out = dict()
-        output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
+        output_names = out_dense.keys()
         for name in list(output_names):
             if 'pred' in name:
-                if index_dense is None:
-                    div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
-                elif index_sparse is None:
-                    div_out[name] = out_dense[name][index_dense].unsqueeze(0)
-                else:
-                    div_out[name] = torch.cat([out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
+                div_out[name] = out_dense[name][index_dense].unsqueeze(0)
             else:
-                div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
+                div_out[name] = out_dense[name]
         div_out['split_map_raw'] = outputs['split_map_raw']
         return div_out
 
