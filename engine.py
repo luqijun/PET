@@ -110,7 +110,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             print("Loss is {}, stopping training".format(loss_value))
             print(loss_dict_reduced)
             sys.exit(1)
-        
+
+        # with torch.autograd.detect_anomaly():
         optimizer.zero_grad()
         losses.backward()
         if max_norm > 0:
