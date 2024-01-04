@@ -18,7 +18,6 @@ from datasets import build_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
 
-
 def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
 
@@ -164,8 +163,8 @@ def main(args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
-            best_mae = checkpoint['best_mae']
-            best_epoch = checkpoint['best_epoch']
+            best_mae = checkpoint.get('best_mae', 0.0)
+            best_epoch = checkpoint.get('best_epoch', 0)
 
     # training
     print("Start training")
