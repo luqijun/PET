@@ -97,7 +97,7 @@ class WinDecoderTransformer(nn.Module):
         tgt = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
         # decoder attention
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
+        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
                                                                         query_pos=query_embed_win, **kwargs)
         hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW) for hs_w in hs_win]
         hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
@@ -137,7 +137,144 @@ class WinDecoderTransformer(nn.Module):
             # decoder forward
             hs = self.decoder_forward(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
-            return hs.transpose(1, 2)
+            return hs.transpose(1, 2).contiguous()
+
+
+    def forward_label_points(self, src, pos_embed, mask, pqs, **kwargs):
+        bs, c, h, w = src.shape
+        self.dec_win_w, self.dec_win_h = kwargs['dec_win_size']
+        query_embeds, query_feats, points_queries, points_queries_offsets, masks = pqs
+        # query_embed, points_queries, query_feats, v_idx = pqs
+
+        # window-rize memory input
+        stride = kwargs['pq_stride']
+        div_ratio = 1 if stride == 8 else 2
+        h_win = int(self.dec_win_h / div_ratio)
+        w_win = int(self.dec_win_w / div_ratio)
+
+        h_nums = (h // h_win)
+        w_nums = (w // w_win)
+        num_wins = h_nums * w_nums
+        memory_win, pos_embed_win, mask_win = enc_win_partition(src, pos_embed, mask, h_win, w_win)
+        # mask_win:((bs*num_wins), win_size)
+        # dynamic decoder forward
+        if 'test' in kwargs:
+            memory_win = memory_win[:, v_idx]
+            pos_embed_win = pos_embed_win[:, v_idx]
+            mask_win = mask_win[v_idx]
+            hs = self.decoder_forward_dynamic(query_feats, query_embed,
+                                              memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w,
+                                              src.shape, **kwargs)
+            return hs
+        else:
+
+
+            # new version
+            q_win_list = []
+            q_pos_list = []
+            q_mask_list = []
+
+            target_points = []
+
+            window_index_mask = []
+            sq_len = 512 if stride == 8 else 128
+
+            for i, (query_embed, query_feat, point_query) in enumerate(zip(query_embeds, query_feats, points_queries)):
+
+                query_embed = query_embed.permute(1, 0)
+                query_feat = query_feat.permute(1, 0)
+
+                point_query = point_query // 8  # (n, 2)
+                point_win_indexes = (point_query[:, 0] // h_win) * w_nums + point_query[:, 1] // w_win
+                assert torch.all(torch.logical_and(point_win_indexes >= 0, point_win_indexes < num_wins)), f"存在元素不在(0,{num_wins})范围内"
+
+                origin_points = kwargs['targets'][i]['points']
+                for win_num in range(num_wins):
+                    point_filter = point_win_indexes == win_num
+                    q_w = query_feat[point_filter].unsqueeze(1)
+                    q_p = query_embed[point_filter].unsqueeze(1)
+
+                    if len(q_w)==0:
+                        window_index_mask.append(False)
+                        continue
+                    else:
+                        window_index_mask.append(True)
+
+                    target_points.extend(origin_points[point_filter])
+
+                    origin_len = q_w.shape[0]
+                    pad_size = sq_len - origin_len
+                    q_w = F.pad(q_w, (0, 0, 0, 0, 0, pad_size))
+                    q_p = F.pad(q_p, (0, 0, 0, 0, 0, pad_size))
+
+                    q_m = torch.ones(sq_len)
+                    q_m[0:origin_len] = 0
+
+                    q_win_list.append(q_w)
+                    q_pos_list.append(q_p)
+                    q_mask_list.append(q_m.bool())
+
+            assert len(window_index_mask) <= memory_win.shape[1]
+
+            target_points = torch.stack(target_points, dim=0)
+
+            memory_win = memory_win[:, window_index_mask]
+            pos_embed_win = pos_embed_win[:, window_index_mask]
+            mask_win = mask_win[window_index_mask]
+
+            q_win = torch.cat(q_win_list, dim=1)
+            q_pos = torch.cat(q_pos_list, dim=1)
+            q_mask = torch.stack(q_mask_list, dim=0).bool().to(device=q_win.device)
+
+            hs = self.decoder(q_win, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
+                              query_pos=q_pos, tgt_key_padding_mask=q_mask, **kwargs)
+
+            hs_result = []
+            for i in range(q_mask.shape[0]):
+                q_m = (~q_mask[i])
+                h = hs[:,:,i:i+1]
+                h = h[:, q_m]
+                hs_result.append(h)
+
+            hs_result = torch.cat([h for h in hs_result if h.shape[1]!=0], dim=1).transpose(1, 2).contiguous()
+            return hs_result, target_points
+
+            # old version
+            # memory_win = memory_win.reshape(h_win * w_win, bs, num_wins, c).permute(1, 0, 2, 3)
+            # pos_embed_win = pos_embed_win.reshape(h_win * w_win, bs, num_wins, c).permute(1, 0, 2, 3)
+            # mask_win =  mask_win.reshape(bs, num_wins, h_win * w_win)
+            # hs_result = []
+            #
+            # for i, (query_embed, query_feat, point_query, memory_w, pos_w, mask_w) in enumerate(zip(query_embeds, query_feats, points_queries, memory_win, pos_embed_win, mask_win)):
+            #     point_query = point_query // 8 # (n, 2)
+            #     point_win_indexes = (point_query[:, 0] // h_win + 1) * (point_query[:, 1] // w_win + 1) - 1   # (n, )
+            #     query_embed = query_embed.permute(1, 0)
+            #     query_feat = query_feat.permute(1, 0)
+            #
+            #     hs_list = []
+            #     if len(query_feat) > 0:
+            #         for win_num in range(num_wins):
+            #             point_filter = point_win_indexes == win_num
+            #             q = query_feat[point_filter].unsqueeze(1)
+            #             q_pos = query_embed[point_filter].unsqueeze(1)
+            #
+            #             if len(q) == 0:
+            #                 continue
+            #
+            #             ori_mem = memory_w[:, win_num, :].unsqueeze(1)
+            #             ori_pos = pos_w[:, win_num, :].unsqueeze(1)
+            #             ori_mask = mask_w[win_num, :].unsqueeze(0)
+            #
+            #             hs = self.decoder(q, ori_mem, memory_key_padding_mask=ori_mask, pos=ori_pos,
+            #                          query_pos=q_pos, **kwargs)
+            #             hs_list.append(hs)
+            #
+            #     hs_list = torch.cat(hs_list, dim=1).cuda() if len(hs_list)>0 else torch.tensor([]).cuda()
+            #     hs_result.append(hs_list)
+            #     # assert hs_list.shape[1] == len(query_feat)
+            #
+            # return hs_result
+
         
 
 class TransformerEncoder(nn.Module):

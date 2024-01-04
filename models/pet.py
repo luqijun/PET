@@ -61,6 +61,125 @@ class BasePETCount(nn.Module):
         query_feats = query_feats.view(bs, c, h, w)
 
         return query_embed, points_queries, query_feats
+
+    def get_unique_points_offsets(self, points):
+
+        points_int = points.long()
+        points_unique = torch.unique(points_int, dim=0) # 去重
+        mask = (points_int[:, None] == points_unique).all(-1).any(-1)
+
+        points = points[mask]
+        points_queries = points.long()
+        points_offsets = points - points_queries
+        return points_queries, points_offsets
+
+    def label_points_queris_embed(self, samples, stride=8, src=None, **kwargs):
+
+        # dense position encoding at every pixel location
+        dense_input_embed = kwargs['dense_input_embed']
+        bs, c = dense_input_embed.shape[:2]
+
+        points_list = [tgt['points'] for tgt in kwargs['targets']]
+
+        query_embeds = []
+        points_queries_list = []
+        query_feats = []
+        masks = []
+        points_offsets_list = []
+        for i, points in enumerate(points_list):
+            # points_queries, points_offsets = self.get_unique_points_offsets(points)
+
+            points_queries = points.long()
+            points_offsets = points - points_queries
+            points_queries_list.append(points_queries)
+            points_offsets_list.append(points_offsets)
+
+            # 取embed
+            query_embed = dense_input_embed[i, :, points_queries[:, 0], points_queries[:, 1]]
+            query_embeds.append(query_embed)
+
+            # 取特征
+            shift_down_queries = (points_queries // stride).cpu()
+            shift_y_down, shift_x_down = shift_down_queries[:, 0],  shift_down_queries[:, 1]
+            assert torch.all(torch.logical_and(shift_y_down >= 0, shift_y_down < src.shape[-2])),\
+                f"shift_y_down索引范围({shift_y_down.min()},{shift_y_down.max()}), 不在(0,{src.shape[-2]})范围内"
+            assert torch.all(torch.logical_and(shift_x_down >= 0, shift_x_down < src.shape[-1])), \
+                f"shift_x_down索引范围({shift_x_down.min()},{shift_x_down.max()}), 不在(0,{src.shape[-1]})范围内"
+            s = src.cpu()
+            query_feat = s[i, :, shift_y_down, shift_x_down]
+            query_feats.append(query_feat.cuda())
+
+            # 生成掩码
+            mask = torch.zeros(src.shape[-2:])
+            mask[shift_y_down, shift_x_down] = 1
+            masks.append((1 - mask))
+
+        return query_embeds, query_feats, points_queries_list, points_offsets_list, masks
+
+        # points = torch.cat(points_list, dim=0)
+        #
+        # # get points length for each instance in batch
+        # points_length = [len(pts) for pts in points_list]
+        #
+        # # get query indexes
+        # points_queries = points.long()
+        #
+        # # get offsets
+        # points_offsets = points - points_queries
+        #
+        # # get point queries embedding
+        # query_embed = dense_input_embed[:, :, points_queries[:, 1], points_queries[:, 0]]
+        #
+        # # get point queries features, equivalent to nearest interpolation
+        # shift_y_down, shift_x_down = points_queries[:, 1] // stride, points_queries[:, 0] // stride
+        # query_feats = src[:, :, shift_y_down, shift_x_down]
+        #
+        # return query_embed, points_queries, query_feats, points_offsets, points_length
+
+
+    def label_points_queris_embed2(self, samples, stride=8, src=None, **kwargs):
+
+        # dense position encoding at every pixel location
+        dense_input_embed = kwargs['dense_input_embed']
+        bs, c, h, w = dense_input_embed.shape
+
+        points_list = [tgt['points'] for tgt in kwargs['targets']]
+
+        query_embeds = []
+        points_queries_list = []
+        query_feats = []
+        masks = []
+        points_offsets_list = []
+        for i, points in enumerate(points_list):
+            # points_queries, points_offsets = self.get_unique_points_offsets(points)
+
+            points_queries = points.long()
+            points_offsets = points - points_queries
+            points_queries_list.append(points_queries)
+            points_offsets_list.append(points_offsets)
+
+            # 取embed
+            query_embed = torch.zeros(1, c, h, w).to(device=src.device)
+            query_embed[0, :, points_queries[:, 0], points_queries[:, 1]] = \
+                dense_input_embed[i, :, points_queries[:, 0], points_queries[:, 1]]
+            query_embeds.append(query_embed)
+
+            # 取特征
+            shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
+            query_feat = torch.zeros(1, c, h, w).to(device=src.device)
+            query_feat[0, :, points_queries[:, 0], points_queries[:, 1]] = src[i, :, shift_y_down, shift_x_down]
+            query_feats.append(query_feat)
+
+            # 生成掩码
+            mask = torch.zeros(dense_input_embed.shape[-2:]).to(device=src.device)
+            mask[points_queries[:, 0], points_queries[:, 1]] = 1
+            masks.append(mask)
+
+        query_embeds = torch.cat(query_embeds, dim=0)
+        query_feats = torch.cat(query_feats, dim=0)
+        masks = torch.stack(masks, dim=0).bool()
+        return query_embeds, query_feats, points_queries_list, points_offsets_list, masks
+
     
     def points_queris_embed_inference(self, samples, stride=8, src=None, **kwargs):
         """
@@ -160,17 +279,39 @@ class BasePETCount(nn.Module):
     def forward(self, samples, features, context_info, **kwargs):
         encode_src, src_pos_embed, mask = context_info
 
+        src, _ = features[self.feat_name].decompose()
+
         # get points queries for transformer
         pqs = self.get_point_query(samples, features, **kwargs)
         
         # point querying
         kwargs['pq_stride'] = self.pq_stride
         hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
-
         # prediction
         points_queries = pqs[1]
         outputs = self.predict(samples, points_queries, hs, **kwargs)
-        return outputs
+
+        out_list = None
+        if 'train' in kwargs:
+            pqs2 = self.label_points_queris_embed(samples, self.pq_stride, src, **kwargs)
+            query_embeds, query_feats, points_queries, points_queries_offsets, masks = pqs2
+            hs2, target_points = self.transformer.forward_label_points(encode_src, src_pos_embed, mask, pqs2, img_shape=samples.tensors.shape[-2:], **kwargs)
+
+            out_list = []
+            pq = torch.cat(points_queries, dim=0)
+            out = self.predict(samples, pq, hs2, **kwargs)
+            out['target_points'] = target_points
+            out_list.append(out)
+
+            # old version
+            # for pq, h in zip(points_queries, hs2):
+            #    if len(h) == 0:
+            #        continue
+            #    out = self.predict(samples, pq, h.transpose(1, 2), **kwargs)
+            #    out_list.append(out)
+
+
+        return outputs, out_list
     
 
 class PET(nn.Module):
@@ -326,7 +467,7 @@ class PET(nn.Module):
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
-            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+            outputs_sparse, label_pred_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
         else:
             outputs_sparse = None
         
@@ -334,12 +475,16 @@ class PET(nn.Module):
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
-            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            outputs_dense, label_pred_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
         else:
             outputs_dense = None
         
         # format outputs
         outputs = dict()
+        if outputs_sparse!=None:
+            outputs_sparse['label_pred'] = label_pred_sparse
+        if outputs_dense!=None:
+            outputs_dense['label_pred'] = label_pred_dense
         outputs['sparse'] = outputs_sparse
         outputs['dense'] = outputs_dense
         outputs['split_map_raw'] = split_map
@@ -380,7 +525,7 @@ class PET(nn.Module):
         div_out = dict()
         output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
         for name in list(output_names):
-            if 'pred' in name:
+            if 'pred' in name and name != 'label_pred':
                 if index_dense is None:
                     div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
                 elif index_sparse is None:
@@ -443,7 +588,7 @@ class SetCriterion(nn.Module):
             weights = target_classes.clone().float()
             weights[weights==0] = self.empty_weight[0]
             weights[weights==1] = self.empty_weight[1]
-            raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none')
+            raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2).contiguous(), target_classes, ignore_index=-1, reduction='none')
 
             # binarize split map
             split_map = kwargs['div']
@@ -460,8 +605,13 @@ class SetCriterion(nn.Module):
             loss_ce_nondiv = (raw_ce_loss * weights * non_div_mask).sum() / ((weights * non_div_mask).sum() + eps)
             loss_ce = loss_ce + loss_ce_nondiv
         else:
-            loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight, ignore_index=-1)
+            loss_ce = F.cross_entropy(src_logits.transpose(1, 2).contiguous(), target_classes, self.empty_weight, ignore_index=-1)
 
+        if outputs['label_pred']!=None:
+            batch_pred_logits = torch.cat([single_pred['pred_logits'] for single_pred in outputs['label_pred']], dim=1).squeeze(0)
+            tgt_classes = torch.ones(batch_pred_logits.shape[0]).long().cuda()
+            loss_label_pred = F.cross_entropy(batch_pred_logits, tgt_classes)
+            loss_ce += loss_label_pred
         losses = {'loss_ce': loss_ce}
         return losses
 
@@ -483,6 +633,8 @@ class SetCriterion(nn.Module):
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
         loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+
+
 
         if 'div' in kwargs:
             # get sparse / dense index
@@ -510,7 +662,18 @@ class SetCriterion(nn.Module):
             losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
         else:
             losses['loss_points'] = loss_points_raw.sum() / num_points
-        
+
+        if outputs['label_pred'] != None:
+            # label
+            target_points = torch.cat([p['target_points'] for p in outputs['label_pred']],
+                                      dim=1).squeeze(0)
+            target_points[:, 0] /= img_h
+            target_points[:, 1] /= img_w
+            batch_pred_points = torch.cat([p['pred_points'] for p in outputs['label_pred']],
+                                          dim=1).squeeze(0)
+
+            loss_label_points_raw = F.smooth_l1_loss(batch_pred_points, target_points, reduction='none')
+            losses['loss_points'] += loss_label_points_raw.sum() / num_points
         return losses
 
     def _get_src_permutation_idx(self, indices):
