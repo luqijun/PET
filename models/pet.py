@@ -83,11 +83,19 @@ class BasePETCount(nn.Module):
 
         query_embeds = []
         points_queries_list = []
+        points_offsets_list = []
         query_feats = []
         masks = []
-        points_offsets_list = []
         for i, points in enumerate(points_list):
             # points_queries, points_offsets = self.get_unique_points_offsets(points)
+
+            if len(points)==0:
+                # query_embeds.append(torch.zeros([dense_input_embed.shape[1], 0]))
+                # points_queries_list.append(torch.zeros((0, 2)))
+                # points_offsets_list.append(torch.zeros((0, 2)))
+                # query_feats.append(torch.zeros((src.shape[1], 0)))
+                # masks.append(torch.ones(src.shape[-2:]))
+                continue
 
             points_queries = points.long()
             points_offsets = points - points_queries
@@ -99,15 +107,15 @@ class BasePETCount(nn.Module):
             query_embeds.append(query_embed)
 
             # 取特征
-            shift_down_queries = (points_queries // stride).cpu()
+            shift_down_queries = (points_queries // stride).cuda()
             shift_y_down, shift_x_down = shift_down_queries[:, 0],  shift_down_queries[:, 1]
-            assert torch.all(torch.logical_and(shift_y_down >= 0, shift_y_down < src.shape[-2])),\
-                f"shift_y_down索引范围({shift_y_down.min()},{shift_y_down.max()}), 不在(0,{src.shape[-2]})范围内"
-            assert torch.all(torch.logical_and(shift_x_down >= 0, shift_x_down < src.shape[-1])), \
-                f"shift_x_down索引范围({shift_x_down.min()},{shift_x_down.max()}), 不在(0,{src.shape[-1]})范围内"
-            s = src.cpu()
+            # assert torch.all(torch.logical_and(shift_y_down >= 0, shift_y_down < src.shape[-2])),\
+            #     f"shift_y_down索引范围({shift_y_down.min()},{shift_y_down.max()}), 不在(0,{src.shape[-2]})范围内"
+            # assert torch.all(torch.logical_and(shift_x_down >= 0, shift_x_down < src.shape[-1])), \
+            #     f"shift_x_down索引范围({shift_x_down.min()},{shift_x_down.max()}), 不在(0,{src.shape[-1]})范围内"
+            s = src
             query_feat = s[i, :, shift_y_down, shift_x_down]
-            query_feats.append(query_feat.cuda())
+            query_feats.append(query_feat)
 
             # 生成掩码
             mask = torch.zeros(src.shape[-2:])
@@ -611,7 +619,7 @@ class SetCriterion(nn.Module):
             batch_pred_logits = torch.cat([single_pred['pred_logits'] for single_pred in outputs['label_pred']], dim=1).squeeze(0)
             tgt_classes = torch.ones(batch_pred_logits.shape[0]).long().cuda()
             loss_label_pred = F.cross_entropy(batch_pred_logits, tgt_classes)
-            loss_ce += loss_label_pred
+            loss_ce += loss_label_pred * 0.5
         losses = {'loss_ce': loss_ce}
         return losses
 
@@ -673,7 +681,7 @@ class SetCriterion(nn.Module):
                                           dim=1).squeeze(0)
 
             loss_label_points_raw = F.smooth_l1_loss(batch_pred_points, target_points, reduction='none')
-            losses['loss_points'] += loss_label_points_raw.sum() / num_points
+            losses['loss_points'] += loss_label_points_raw.sum() / num_points  * 0.5
         return losses
 
     def _get_src_permutation_idx(self, indices):

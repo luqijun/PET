@@ -176,29 +176,32 @@ class WinDecoderTransformer(nn.Module):
 
             target_points = []
 
-            window_index_mask = []
+            window_index_mask = torch.zeros(src.shape[0] * num_wins, dtype=torch.bool)
             sq_len = 512 if stride == 8 else 128
+
+            batch_indices = torch.nonzero(torch.Tensor([len(tgt['points']) for tgt in kwargs['targets']])).squeeze(1)
+            origin_points_list = [tgt['points'] for tgt in kwargs['targets'] if len(tgt['points'])>0]
 
             for i, (query_embed, query_feat, point_query) in enumerate(zip(query_embeds, query_feats, points_queries)):
 
+                batch_index = batch_indices[i]
                 query_embed = query_embed.permute(1, 0)
                 query_feat = query_feat.permute(1, 0)
 
                 point_query = point_query // 8  # (n, 2)
                 point_win_indexes = (point_query[:, 0] // h_win) * w_nums + point_query[:, 1] // w_win
-                assert torch.all(torch.logical_and(point_win_indexes >= 0, point_win_indexes < num_wins)), f"存在元素不在(0,{num_wins})范围内"
+                # assert torch.all(torch.logical_and(point_win_indexes >= 0, point_win_indexes < num_wins)), f"存在元素不在(0,{num_wins})范围内"
 
-                origin_points = kwargs['targets'][i]['points']
+                origin_points = origin_points_list[i]
                 for win_num in range(num_wins):
                     point_filter = point_win_indexes == win_num
                     q_w = query_feat[point_filter].unsqueeze(1)
                     q_p = query_embed[point_filter].unsqueeze(1)
 
                     if len(q_w)==0:
-                        window_index_mask.append(False)
                         continue
                     else:
-                        window_index_mask.append(True)
+                        window_index_mask[batch_index * num_wins + win_num] = True
 
                     target_points.extend(origin_points[point_filter])
 
@@ -215,9 +218,6 @@ class WinDecoderTransformer(nn.Module):
                     q_mask_list.append(q_m.bool())
 
             assert len(window_index_mask) <= memory_win.shape[1]
-
-            target_points = torch.stack(target_points, dim=0)
-
             memory_win = memory_win[:, window_index_mask]
             pos_embed_win = pos_embed_win[:, window_index_mask]
             mask_win = mask_win[window_index_mask]
@@ -237,6 +237,7 @@ class WinDecoderTransformer(nn.Module):
                 hs_result.append(h)
 
             hs_result = torch.cat([h for h in hs_result if h.shape[1]!=0], dim=1).transpose(1, 2).contiguous()
+            target_points = torch.stack(target_points, dim=0)
             return hs_result, target_points
 
             # old version
