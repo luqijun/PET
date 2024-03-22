@@ -12,6 +12,7 @@ from .matcher import build_matcher
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
+import math
 
 
 class BasePETCount(nn.Module):
@@ -35,6 +36,7 @@ class BasePETCount(nn.Module):
         Generate point query embedding during training
         """
         # dense position encoding at every pixel location
+        depth_input_embed = kwargs['depth_input_embed'] # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
         bs, c = dense_input_embed.shape[:2]
 
@@ -60,13 +62,19 @@ class BasePETCount(nn.Module):
         query_feats = src[:, :, shift_y_down,shift_x_down]
         query_feats = query_feats.view(bs, c, h, w)
 
-        return query_embed, points_queries, query_feats
+        # depth_embed
+        depth_embed = depth_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
+        bs, c = depth_embed.shape[:2]
+        depth_embed = depth_embed.view(bs, c, h, w)
+
+        return query_embed, points_queries, query_feats, depth_embed
     
     def points_queris_embed_inference(self, samples, stride=8, src=None, **kwargs):
         """
         Generate point query embedding during inference
         """
         # dense position encoding at every pixel location
+        depth_input_embed = kwargs['depth_input_embed']  # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
         bs, c = dense_input_embed.shape[:2]
 
@@ -84,6 +92,7 @@ class BasePETCount(nn.Module):
 
         # get points queries embedding 
         query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
+        depth_embed = depth_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
         bs, c = query_embed.shape[:2]
 
         # get points queries features, equivalent to nearest interpolation
@@ -92,11 +101,13 @@ class BasePETCount(nn.Module):
         
         # window-rize
         query_embed = query_embed.reshape(bs, c, h, w)
+        depth_embed = depth_embed.reshape(bs, c, h, w)
         points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
         query_feats = query_feats.reshape(bs, c, h, w)
 
         dec_win_w, dec_win_h = kwargs['dec_win_size']
         query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
+        depth_embed_win = window_partition(depth_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
         points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
         
@@ -107,11 +118,12 @@ class BasePETCount(nn.Module):
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
+        depth_embed_win = depth_embed_win[:, v_idx]
         points_queries_win = points_queries_win.to(v_idx.device)
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
         # points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
     
-        return query_embed_win, points_queries_win, query_feats_win, v_idx
+        return query_embed_win, points_queries_win, query_feats_win, v_idx, depth_embed_win
     
     def get_point_query(self, samples, features, **kwargs):
         """
@@ -121,13 +133,14 @@ class BasePETCount(nn.Module):
 
         # generate points queries and position embedding
         if 'train' in kwargs:
-            query_embed, points_queries, query_feats = self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
+            query_embed, points_queries, query_feats, depth_embed = self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
             query_embed = query_embed.flatten(2).permute(2,0,1) # NxCxHxW --> (HW)xNxC
+            depth_embed = depth_embed.flatten(2).permute(2,0,1)
             v_idx = None
         else:
-            query_embed, points_queries, query_feats, v_idx = self.points_queris_embed_inference(samples, self.pq_stride, src, **kwargs)
+            query_embed, points_queries, query_feats, v_idx, depth_embed = self.points_queris_embed_inference(samples, self.pq_stride, src, **kwargs)
 
-        out = (query_embed, points_queries, query_feats, v_idx)
+        out = (query_embed, points_queries, query_feats, v_idx, depth_embed)
         return out
     
     def predict(self, samples, points_queries, hs, **kwargs):
@@ -177,9 +190,10 @@ class PET(nn.Module):
     """ 
     Point quEry Transformer
     """
-    def __init__(self, backbone, num_classes, args=None):
+    def __init__(self, backbone, num_classes, depth_backbone=None, args=None):
         super().__init__()
         self.backbone = backbone
+        self.depth_backbone = depth_backbone
         
         # positional embedding
         self.pos_embed = build_position_encoding(args)
@@ -212,6 +226,13 @@ class PET(nn.Module):
         transformer = build_decoder(args)
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
+
+        # depth adapt
+        self.adapt_pos1d = nn.Sequential(
+            nn.Linear(backbone.num_channels, backbone.num_channels),
+            nn.ReLU(),
+            nn.Linear(backbone.num_channels, backbone.num_channels),
+        )
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
@@ -280,6 +301,15 @@ class PET(nn.Module):
         losses += loss_split * weight_split
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
 
+    def pos2posemb1d(self, pos, num_pos_feats=256, temperature=10000):
+        scale = 2 * math.pi
+        pos = pos * scale
+        dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device)
+        dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
+        pos_x = pos[..., None] / dim_t
+        posemb = torch.stack((pos_x[..., 0::2].sin(), pos_x[..., 1::2].cos()), dim=-1).flatten(-2)
+        return posemb
+
     def forward(self, samples: NestedTensor, **kwargs):
         """
         The forward expects a NestedTensor, which consists of:
@@ -291,9 +321,25 @@ class PET(nn.Module):
             samples = nested_tensor_from_tensor_list(samples)
         features, pos = self.backbone(samples)
 
+
         # positional embedding
         dense_input_embed = self.pos_embed(samples)
         kwargs['dense_input_embed'] = dense_input_embed
+
+        # depth embedding
+        depth_embed = torch.cat([self.pos2posemb1d(tgt['depth']) for tgt in kwargs['targets']])
+        #kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
+        kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
+
+        # dense_input_depth = torch.cat([tgt['depth'].unsqueeze(0) for tgt in kwargs['targets']])
+        # dense_input_depth = nested_tensor_from_tensor_list(dense_input_depth.repeat(1, 3, 1, 1))
+        # depth_features, _ = self.depth_backbone(dense_input_depth)
+        # features['4x'].tensors += depth_features['4x'].tensors
+        # features['8x'].tensors += depth_features['8x'].tensors
+
+        # features = features + depth_features
+        # kwargs['dense_input_embed'] = dense_input_embed + dense_input_depth
+        # kwargs['dense_input_embed'] = dense_input_embed + (dense_input_depth - 0.5) * 2
 
         # feature projection
         features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
@@ -484,6 +530,11 @@ class SetCriterion(nn.Module):
         target_points[:, 1] /= img_w
         loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
 
+        # 使用深度权重
+        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 10
+        # depth_weights = depth_weights[:len(loss_points_raw)]
+        # loss_points_raw *= depth_weights
+
         if 'div' in kwargs:
             # get sparse / dense index
             den = torch.tensor([target['density'] for target in targets])
@@ -586,9 +637,11 @@ def build_pet(args):
     # build model
     num_classes = 1
     backbone = build_backbone_vgg(args)
+    depth_backbone = build_backbone_vgg(args)
     model = PET(
         backbone,
         num_classes=num_classes,
+        depth_backbone=depth_backbone,
         args=args,
     )
 
