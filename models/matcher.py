@@ -51,6 +51,7 @@ class HungarianMatcher(nn.Module):
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets])
+        depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1)
 
         # compute the classification cost, i.e., - prob[target class]
         cost_class = -out_prob[:, tgt_ids]
@@ -63,7 +64,8 @@ class HungarianMatcher(nn.Module):
         cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix
-        C = self.cost_point * cost_point + self.cost_class * cost_class
+        C = cost_point * depth_weights + self.cost_class * cost_class
+        # C = cost_point * self.cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 
         sizes = [len(v["points"]) for v in targets]
