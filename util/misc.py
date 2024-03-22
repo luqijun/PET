@@ -248,6 +248,13 @@ class MetricLogger(object):
 def collate_fn(batch):
     batch = list(zip(*batch))
     batch[0] = nested_tensor_from_tensor_list(batch[0])
+    img_shape = batch[0].tensors.shape[-2:]
+    for tgt in batch[1]:
+        if tgt['depth'].shape[-2:] != img_shape:
+            pad_w = img_shape[1] - tgt['depth'].shape[-1]
+            pad_h = img_shape[0] - tgt['depth'].shape[-2]
+            tgt['depth'] = torch.nn.functional.pad(tgt['depth'], (0, pad_w, 0, pad_h))
+
     return tuple(batch)
 
 
