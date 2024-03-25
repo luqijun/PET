@@ -113,8 +113,9 @@ class BasePETCount(nn.Module):
         
         # dynamic point query generation
         div = kwargs['div']
+        thrs = 0.5
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > 0.5).sum(dim=0)[:,0] 
+        valid_div = (div_win > thrs).sum(dim=0)[:,0]
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
@@ -274,31 +275,38 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
 
-        # quadtree splitter loss
-        den = torch.tensor([target['density'] for target in targets])   # crowd density
-        bs = len(den)
-        ds_idx = den < 2 * self.quadtree_sparse.pq_stride   # dense regions index
-        ds_div = outputs['split_map_raw'][ds_idx]
-        sp_div = 1 - outputs['split_map_raw']
+        # splitter depth loss
+        gt_depth_levels = torch.cat([target['depth_level'] for target in targets], dim=0)
+        pred_depth_levels = F.interpolate(outputs['split_map_raw'], size=gt_depth_levels.shape[-2:])
+        loss_split_depth = F.binary_cross_entropy(pred_depth_levels.float().squeeze(1), gt_depth_levels)
+        loss_split = loss_split_depth
+        losses += loss_split * 0.1
 
-        # constrain sparse regions
-        loss_split_sp = 1 - sp_div.view(bs, -1).max(dim=1)[0].mean()
-
-        # constrain dense regions
-        if sum(ds_idx) > 0:
-            ds_num = ds_div.shape[0]
-            loss_split_ds = 1 - ds_div.view(ds_num, -1).max(dim=1)[0].mean()
-        else:
-            loss_split_ds = outputs['split_map_raw'].sum() * 0.0
+        # # quadtree splitter loss
+        # den = torch.tensor([target['density'] for target in targets])   # crowd density
+        # bs = len(den)
+        # ds_idx = den < 2 * self.quadtree_sparse.pq_stride   # dense regions index
+        # ds_div = outputs['split_map_raw'][ds_idx]
+        # sp_div = 1 - outputs['split_map_raw']
+        #
+        # # constrain sparse regions
+        # loss_split_sp = 1 - sp_div.view(bs, -1).max(dim=1)[0].mean()
+        #
+        # # constrain dense regions
+        # if sum(ds_idx) > 0:
+        #     ds_num = ds_div.shape[0]
+        #     loss_split_ds = 1 - ds_div.view(ds_num, -1).max(dim=1)[0].mean()
+        # else:
+        #     loss_split_ds = outputs['split_map_raw'].sum() * 0.0
 
         # update quadtree splitter loss            
-        loss_split = loss_split_sp + loss_split_ds
-        weight_split = 0.1 if epoch >= warmup_ep else 0.0
-        loss_dict['loss_split'] = loss_split
-        weight_dict['loss_split'] = weight_split
+        # loss_split = loss_split_sp + loss_split_ds
+        # weight_split = 0.1 if epoch >= warmup_ep else 0.0
+        # loss_dict['loss_split'] = loss_split
+        # weight_dict['loss_split'] = weight_split
 
         # final loss
-        losses += loss_split * weight_split
+        # losses += loss_split * weight_split
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
 
     def pos2posemb1d(self, pos, num_pos_feats=256, temperature=10000):
@@ -402,10 +410,10 @@ class PET(nn.Module):
         return losses
     
     def test_forward(self, samples, features, pos, **kwargs):
+        thrs = 0.5  # inference threshold
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
-        thrs = 0.5  # inference threshold        
-        
+
         # process sparse point queries
         if outputs['sparse'] is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
@@ -531,7 +539,7 @@ class SetCriterion(nn.Module):
         loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
 
         # 使用深度权重
-        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 10
+        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
         # depth_weights = depth_weights[:len(loss_points_raw)]
         # loss_points_raw *= depth_weights
 
