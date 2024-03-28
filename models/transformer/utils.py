@@ -1,6 +1,7 @@
 """
 Transformer window-rize tools
 """
+import torch
 
 def enc_win_partition(src, pos_embed, mask, enc_win_h, enc_win_w):
     """
@@ -44,3 +45,9 @@ def window_partition_reverse(windows, window_size_h, window_size_w, H, W):
     x = x.reshape(B, H*W, -1).permute(1,0,2)
     return x
 
+
+def inverse_sigmoid(x, eps=1e-5):
+    x = x.clamp(min=0, max=1)
+    x1 = x.clamp(min=eps)
+    x2 = (1 - x).clamp(min=eps)
+    return torch.log(x1/x2)

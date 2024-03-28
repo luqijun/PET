@@ -64,8 +64,8 @@ class HungarianMatcher(nn.Module):
         cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix
-        C = cost_point * depth_weights + self.cost_class * cost_class
-        # C = cost_point * self.cost_point + self.cost_class * cost_class
+        # C = cost_point * depth_weights + self.cost_class * cost_class
+        C = cost_point * self.cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 
         sizes = [len(v["points"]) for v in targets]
