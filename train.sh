@@ -3,12 +3,12 @@ python -m torch.distributed.launch \
     --nproc_per_node=1 \
     --master_port=10001 \
     --use_env main.py \
-    --batch_size=8 \
+    --batch_size=6 \
     --lr=0.0001 \
     --backbone="vgg16_bn" \
     --ce_loss_coef=1.0 \
     --point_loss_coef=5.0 \
-    --eos_coef=0.5 \
+    --eos_coef=1.0 \
     --dec_layers=2 \
     --hidden_dim=256 \
     --dim_feedforward=512 \
@@ -16,7 +16,7 @@ python -m torch.distributed.launch \
     --dropout=0.0 \
     --epochs=3000 \
     --dataset_file="SHA" \
-    --eval_start=100 \
+    --eval_start=50 \
     --eval_freq=1 \
     --output_dir='pet_model'
     # --resume='outputs/SHA/pet_model/checkpoint.pth'

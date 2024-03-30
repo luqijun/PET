@@ -137,13 +137,13 @@ class TransformerDecoderLayer(nn.Module):
             query_pos_y = win_partition_query_func(query_pos_y)
             query_pos_y = query_pos_y[:, v_idx]
 
-            posemb_row = posemb_row.unsqueeze(1).repeat(1, h, 1, 1)
-            posemb_row = win_partition_src_func(posemb_row.permute(0, 3, 1, 2)).permute(1, 0, 2)
+            posemb_row = posemb_row.unsqueeze(1).repeat(1, h, 1, 1).permute(0, 3, 1, 2) # B, C, H, W
+            posemb_row = win_partition_src_func(posemb_row).permute(1, 0, 2)
             posemb_row = posemb_row[v_idx]
             posemb_row = posemb_row.reshape(posemb_row.shape[0], win_h, win_w, -1)
 
-            posemb_col = posemb_col.unsqueeze(2).repeat(1, 1, w, 1)
-            posemb_col = win_partition_src_func(posemb_col.permute(0, 3, 1, 2)).permute(1, 0, 2)
+            posemb_col = posemb_col.unsqueeze(2).repeat(1, 1, w, 1).permute(0, 3, 1, 2) # B, C, H, W
+            posemb_col = win_partition_src_func(posemb_col).permute(1, 0, 2)
             posemb_col = posemb_col[v_idx]
             posemb_col = posemb_col.reshape(posemb_col.shape[0], win_h, win_w, -1)
 

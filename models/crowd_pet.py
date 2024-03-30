@@ -50,12 +50,14 @@ class CrowdPET(nn.Module):
 
         # encoder
         self.encode_feats = '8x'
-        enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
+        # enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
+        enc_win_list = [(64, 32), (64, 32), (32, 16), (32, 16)]  # encoder window size
         args.enc_layers = len(enc_win_list)
         self.encoder = build_encoder(args, enc_win_list=enc_win_list)
 
         # quadtree splitter
-        context_patch = (128, 64)
+        # context_patch = (128, 64)
+        context_patch = (256, 128)
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
         self.quadtree_splitter = nn.Sequential(
             nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
@@ -64,7 +66,8 @@ class CrowdPET(nn.Module):
         )
 
         # point-query quadtree
-        args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
+        # args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
+        args.sparse_stride, args.dense_stride = 16, 8    # point-query stride
         self.sparse_stride = args.sparse_stride
         self.dense_stride = args.dense_stride
 
@@ -184,8 +187,8 @@ class CrowdPET(nn.Module):
 
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
-        sp_h, sp_w = src_h, src_w
-        ds_h, ds_w = int(src_h * 2), int(src_w * 2)
+        sp_h, sp_w = src_h // 2, src_w // 2
+        ds_h, ds_w = int(src_h), int(src_w)
 
         # use prediction
         split_map = self.quadtree_splitter(encode_src)
@@ -244,7 +247,7 @@ class CrowdPET(nn.Module):
         """
         output_sparse, output_dense = outputs['sparse'], outputs['dense']
         weight_dict = criterion.weight_dict
-        warmup_ep = 5
+        warmup_ep = 0
 
         # compute loss
         if epoch >= warmup_ep:

@@ -26,7 +26,7 @@ class BasePETCount(nn.Module):
 
         dec_win_w, dec_win_h = kwargs['dec_win_size']
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
-        new_dec_win_w, new_dec_win_h = dec_win_w // div_ratio, dec_win_h// div_ratio
+        new_dec_win_w, new_dec_win_h = dec_win_w * div_ratio, dec_win_h * div_ratio
         kwargs['dec_win_size_src'] = [new_dec_win_w, new_dec_win_h]
         win_partition_query_func = partial(window_partition, window_size_h=dec_win_h, window_size_w=dec_win_w)
         win_partition_query_reverse_func = partial(window_partition_reverse, window_size_h=dec_win_h, window_size_w=dec_win_w)

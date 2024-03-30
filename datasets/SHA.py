@@ -35,7 +35,7 @@ class SHA(Dataset):
         self.pil_to_tensor = standard_transforms.ToTensor()
         self.train = train
         self.flip = flip
-        self.patch_size = 256
+        self.patch_size = 512
     
     def compute_density(self, points):
         """
