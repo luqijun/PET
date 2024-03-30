@@ -7,7 +7,8 @@ from typing import Optional, List
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
-from .utils import *
+from .utils import (_get_clones, _get_activation_fn,  window_partition, window_partition_reverse,
+                    enc_win_partition, enc_win_partition_reverse)
 
 class WinEncoderTransformer(nn.Module):
     """
@@ -330,9 +331,6 @@ class DecoderLayer(nn.Module):
         return tgt
 
 
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-
 
 def build_encoder(args, **kwargs):
     return WinEncoderTransformer(
@@ -354,16 +352,3 @@ def build_decoder(args, **kwargs):
         num_decoder_layers=args.dec_layers,
         return_intermediate_dec=True,
     )
-
-
-def _get_activation_fn(activation):
-    """
-    Return an activation function given a string
-    """
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
