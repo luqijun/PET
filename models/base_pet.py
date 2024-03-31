@@ -56,35 +56,49 @@ class BasePETCount(nn.Module):
         query_embed, points_queries, query_feats, depth_embed = \
             self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
 
+        split_rect = True
+        thrs = 0.5
         query_shape = query_embed.shape
-        win_partition_func = kwargs['win_partition_query_func']
-        dec_win_w, dec_win_h = kwargs['dec_win_size']
-        query_embed_win = win_partition_func(query_embed) # win_h*win_w, B * num_wins, C
-        depth_embed_win = win_partition_func(depth_embed)
-        query_feats_win = win_partition_func(query_feats)
+        div = kwargs['div']
+        if split_rect:
+            win_partition_func = kwargs['win_partition_query_func']
+            dec_win_w, dec_win_h = kwargs['dec_win_size']
+            query_embed_win = win_partition_func(query_embed) # win_h*win_w, B * num_wins, C
+            depth_embed_win = win_partition_func(depth_embed)
+            query_feats_win = win_partition_func(query_feats)
 
-        if 'test' in kwargs:
-            # dynamic point query generation
-            div = kwargs['div']
-            thrs = 0.5
-            div_win = win_partition_func(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-            valid_div = (div_win > thrs).sum(dim=0)[:, 0]
-            v_idx = valid_div > 0
-            query_embed_win = query_embed_win[:, v_idx]
-            query_feats_win = query_feats_win[:, v_idx]
-            depth_embed_win = depth_embed_win[:, v_idx]
+            if 'test' in kwargs:
+                # dynamic point query generation
+                div_win = win_partition_func(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
+                valid_div = (div_win > thrs).sum(dim=0)[:, 0]
+                v_idx = valid_div > 0
+                query_embed_win = query_embed_win[:, v_idx]
+                query_feats_win = query_feats_win[:, v_idx]
+                depth_embed_win = depth_embed_win[:, v_idx]
 
-            h, w = query_embed.shape[-2:]
-            points_queries_temp = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
-            points_queries_win = win_partition_func(points_queries_temp)
-            points_queries_win = points_queries_win.to(v_idx.device)
-            points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
+                h, w = query_embed.shape[-2:]
+                points_queries_temp = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
+                points_queries_win = win_partition_func(points_queries_temp)
+                points_queries_win = points_queries_win.to(v_idx.device)
+                points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
+            else:
+                v_idx = torch.ones(query_embed_win.shape[1], device=query_embed_win.device).bool()
+                points_queries_win = points_queries
+            out = (query_shape, query_embed_win, points_queries_win, points_queries, query_feats_win, v_idx, depth_embed_win)
         else:
-            v_idx = torch.ones(query_embed_win.shape[1], device=query_embed_win.device).bool()
-            points_queries_win = points_queries
-
-
-        out = (query_shape, query_embed_win, points_queries_win, points_queries, query_feats_win, v_idx, depth_embed_win)
+            query_embed = query_embed.transpose(0, 1).flatten(1)
+            query_feats = query_feats.transpose(0, 1).flatten(1)
+            depth_embed = depth_embed.transpose(0, 1).flatten(1)
+            if 'test' in kwargs:
+                v_idx = (div > thrs).flatten()
+                query_embed = query_embed[:, v_idx]
+                query_feats = query_feats[:, v_idx]
+                depth_embed = depth_embed[:, v_idx]
+                points_queries = points_queries.to(query_embed.device)
+                points_queries = points_queries[v_idx, :]
+            else:
+                v_idx = torch.ones(query_embed.shape[1], device=query_embed.device).bool()
+            out = (query_shape, query_embed, points_queries, points_queries, query_feats, v_idx, depth_embed)
         return out
 
     def points_queris_embed(self, samples, stride, src=None, **kwargs):

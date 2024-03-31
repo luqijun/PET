@@ -43,31 +43,48 @@ class AnchorWinEncoderTransformer(nn.Module):
         
         memeory_list = []
         memeory = src
-        for idx, enc_win_size in enumerate(self.enc_win_list):
 
-            # encoder window partition
-            enc_win_w, enc_win_h = enc_win_size
+        posemb_row = posemb_row.unsqueeze(1).repeat(1, h, 1, 1).permute(0, 3, 1, 2)
+        posemb_col = posemb_col.unsqueeze(2).repeat(1, 1, w, 1).permute(0, 3, 1, 2)
 
-            posemb_row_tmp = posemb_row.unsqueeze(1).repeat(1, h, 1, 1).permute(0, 3, 1, 2)
-            posemb_col_tmp = posemb_col.unsqueeze(2).repeat(1, 1, w, 1).permute(0, 3, 1, 2)
+        split_rect = True
+        if split_rect:
+            # split to rectangle windows
+            for idx, enc_win_size in enumerate(self.enc_win_list):
 
-            memeory_win, src_pos_embed_win, posemb_row_tmp, posemb_col_tmp, mask_win = \
-                enc_win_partition1(memeory, src_pos_embed, posemb_row_tmp, posemb_col_tmp, mask, enc_win_h, enc_win_w)
+                # encoder window partition
+                enc_win_w, enc_win_h = enc_win_size
 
-            use_src_pos = False
-            if use_src_pos:
-                posemb_row_tmp = (posemb_row_tmp + src_pos_embed_win).permute(0, 2, 3, 1)
-                posemb_col_tmp = (posemb_col_tmp + src_pos_embed_win).permute(0, 2, 3, 1)
-            else:
-                posemb_row_tmp = posemb_row_tmp.permute(0, 2, 3, 1)
-                posemb_col_tmp = posemb_col_tmp.permute(0, 2, 3, 1)
+                memeory_win, src_pos_embed_win, posemb_row_tmp, posemb_col_tmp, mask_win = \
+                    enc_win_partition1(memeory, src_pos_embed, posemb_row, posemb_col, mask, enc_win_h, enc_win_w)
 
-            output = self.encoder_layers[idx](memeory_win, mask_win, posemb_row_tmp, posemb_col_tmp,posemb_2d)
+                use_src_pos = False
+                if use_src_pos:
+                    posemb_row_tmp = (posemb_row_tmp + src_pos_embed_win).permute(0, 2, 3, 1)
+                    posemb_col_tmp = (posemb_col_tmp + src_pos_embed_win).permute(0, 2, 3, 1)
+                else:
+                    posemb_row_tmp = posemb_row_tmp.permute(0, 2, 3, 1)
+                    posemb_col_tmp = posemb_col_tmp.permute(0, 2, 3, 1)
 
-            # reverse encoder window
-            memeory = enc_win_partition_reverse1(output, enc_win_h, enc_win_w, h, w)
-            if self.return_intermediate:
-                memeory_list.append(memeory)
+                output = self.encoder_layers[idx](memeory_win, mask_win, posemb_row_tmp, posemb_col_tmp,posemb_2d)
+
+                # reverse encoder window
+                memeory = enc_win_partition_reverse1(output, enc_win_h, enc_win_w, h, w)
+                if self.return_intermediate:
+                    memeory_list.append(memeory)
+        else:
+            # not split to rectangle windows
+            posemb_row = posemb_row.permute(0, 2, 3, 1)
+            posemb_col = posemb_col.permute(0, 2, 3, 1)
+            for idx, enc_win_size in enumerate(self.enc_win_list):
+
+                output = self.encoder_layers[idx](memeory, mask, posemb_row, posemb_col, posemb_2d)
+
+                memeory = output
+                if self.return_intermediate:
+                    memeory_list.append(memeory)
+
+
         memory_ = memeory_list if self.return_intermediate else memeory
         return memory_
 

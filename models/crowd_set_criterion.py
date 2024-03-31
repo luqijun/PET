@@ -125,17 +125,17 @@ class CrowdSetCriterion(nn.Module):
             loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
             loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
             loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
+            loss_points = loss_points_div_sp + loss_points_div_ds
 
             # loss on non-div regions
             non_div_mask = split_map <= div_thrs
             loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
                         non_div_mask[idx].sum() + eps)
-
-            # final point loss
-            losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
+            loss_points += loss_points_nondiv
         else:
-            losses['loss_points'] = loss_points_raw.sum() / num_points
+            loss_points = loss_points_raw.sum() / num_points
 
+        losses['loss_points'] = loss_points
         return losses
 
     def _get_src_permutation_idx(self, indices):
