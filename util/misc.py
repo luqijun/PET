@@ -258,10 +258,10 @@ def collate_fn(batch):
             tgt['depth'] = torch.nn.functional.pad(tgt['depth'], (0, pad_w, 0, pad_h))
 
         # depth level
-        img_depth = tgt['depth']
-        depth_level = torch.ones(img_depth.shape, device=img_depth.device)
-        depth_level[img_depth > 0.4] = 0
-        tgt['depth_level'] = depth_level
+        # img_depth = tgt['depth']
+        # depth_level = torch.ones(img_depth.shape, device=img_depth.device)
+        # depth_level[img_depth > 0.4] = 0
+        # tgt['depth_level'] = depth_level
 
     return tuple(batch)
 

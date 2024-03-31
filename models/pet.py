@@ -276,8 +276,16 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_dense)
 
         # splitter depth loss
-        gt_depth_levels = torch.cat([target['depth_level'] for target in targets], dim=0)
-        pred_depth_levels = F.interpolate(outputs['split_map_raw'], size=gt_depth_levels.shape[-2:])
+        pred_depth_levels = outputs['split_map_raw']
+        gt_depth_levels = []
+        for tgt in targets:
+            depth = F.adaptive_avg_pool2d(tgt['depth'], pred_depth_levels.shape[-2:])
+            depth_level = torch.ones(depth.shape, device=depth.device)
+            depth_level[depth > 0.4] = 0
+            gt_depth_levels.append(depth_level)
+        gt_depth_levels = torch.cat(gt_depth_levels, dim=0)
+        # gt_depth_levels = torch.cat([target['depth_level'] for target in targets], dim=0)
+        # pred_depth_levels = F.interpolate(outputs['split_map_raw'], size=gt_depth_levels.shape[-2:])
         loss_split_depth = F.binary_cross_entropy(pred_depth_levels.float().squeeze(1), gt_depth_levels)
         loss_split = loss_split_depth
         losses += loss_split * 0.1
