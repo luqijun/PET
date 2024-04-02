@@ -152,6 +152,7 @@ def main(args):
 
     # resume
     best_mae, best_epoch = 1e8, 0
+    best_mse, best_mse_epoch = 1e8, 0
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -165,6 +166,8 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
             best_mae = checkpoint.get('best_mae', 0.0)
             best_epoch = checkpoint.get('best_epoch', 0)
+            best_mse = checkpoint.get('best_mse', 0.0)
+            best_mse_epoch = checkpoint.get('best_mse_epoch', 0)
 
     # training
     print("Start training")
@@ -197,11 +200,13 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
                 'best_mae': best_mae,
+                'best_epoch': best_epoch,
+                'best_mse': best_mse,
+                'best_mse_epoch': best_mse_epoch,
             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
+                     'epoch': epoch, 'n_parameters': n_parameters}
 
         # write log
         if utils.is_main_process():
@@ -219,19 +224,26 @@ def main(args):
             if mae < best_mae:
                 best_epoch = epoch
                 best_mae = mae
+            if mse < best_mse:
+                best_mse_epoch = epoch
+                best_mse = mse
             print("\n==========================")
-            print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
+            print("\nepoch:", epoch, "mae:", mae, "mse:", mse,
+                  "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "\tbest mse:", best_mse, "best epoch:", best_mse_epoch)
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a") as log_file:
-                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n\n".format(
-                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch))
+                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\tbest mse:{}, best epoch: {}".format(
+                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
                                                 
-            # save best checkpoint
-            if mae == best_mae and utils.is_main_process():
+                # save best checkpoint
                 src_path = output_dir / 'checkpoint.pth'
-                dst_path = output_dir / 'best_checkpoint.pth'
-                shutil.copyfile(src_path, dst_path)
+                if mae == best_mae:
+                    dst_path = output_dir / 'best_mae_checkpoint.pth'
+                    shutil.copyfile(src_path, dst_path)
+                if mse == best_mse:
+                    dst_path = output_dir / 'best_mse_checkpoint.pth'
+                    shutil.copyfile(src_path, dst_path)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
