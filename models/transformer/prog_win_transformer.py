@@ -85,50 +85,6 @@ class WinDecoderTransformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
     
-    def decoder_forward(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
-                        depth_embed, **kwargs):
-        """ 
-        decoder forward during training
-        """
-        bs, c, h, w = src_shape
-        qH, qW = query_feats.shape[-2:]
-
-        # window-rize query input
-        query_embed_ = query_embed.permute(1,2,0).reshape(bs, c, qH, qW)
-        query_embed_win = window_partition(query_embed_, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        tgt = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        depth_embed_ = depth_embed.permute(1,2,0).reshape(bs, c, qH, qW)
-        depth_embed_win = window_partition(depth_embed_, window_size_h=dec_win_h, window_size_w=dec_win_w)
-
-        # depth attention
-        # tgt += depth_embed_win
-        # tgt = self.cross_attn_depth(tgt + query_embed_win, depth_embed_win + query_embed_win, depth_embed_win)[0]
-
-        # decoder attention
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
-                                                                        query_pos=query_embed_win, **kwargs)
-        hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW) for hs_w in hs_win]
-        hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
-        return hs
-    
-    def decoder_forward_dynamic(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
-                                depth_embed, **kwargs):
-        """ 
-        decoder forward during inference
-        """       
-        # decoder attention
-        tgt = query_feats
-
-        # depth attention
-        # tgt += depth_embed
-        # tgt = self.cross_attn_depth(tgt + query_embed, depth_embed + query_embed, depth_embed)[0]
-
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
-                                                                        query_pos=query_embed, **kwargs)
-        num_layer, num_elm, num_win, dim = hs_win.shape
-        hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
-        return hs
-    
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
         query_embed, points_queries, query_feats, v_idx, depth_embed = pqs
@@ -140,20 +96,34 @@ class WinDecoderTransformer(nn.Module):
                                                     int(self.dec_win_h/div_ratio), int(self.dec_win_w/div_ratio))
 
         # dynamic decoder forward
-        if 'test' in kwargs:
-            memory_win = memory_win[:,v_idx]
-            pos_embed_win = pos_embed_win[:,v_idx]
-            mask_win = mask_win[v_idx]
-            hs = self.decoder_forward_dynamic(query_feats, query_embed, 
-                                              memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
-                                              depth_embed, **kwargs)
-            return hs
-        else:
-            # decoder forward
-            hs = self.decoder_forward(query_feats, query_embed, 
-                                      memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
-                                      depth_embed,  **kwargs)
-            return hs.transpose(1, 2)
+        # if 'test' in kwargs:
+        memory_win = memory_win[:,v_idx]
+        pos_embed_win = pos_embed_win[:,v_idx]
+        mask_win = mask_win[v_idx]
+        hs = self.decoder_forward_dynamic(query_feats, query_embed,
+                                          memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
+                                          depth_embed, **kwargs)
+        return hs
+
+    def decoder_forward_dynamic(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
+                                depth_embed, **kwargs):
+        """
+        decoder forward during inference
+        """
+        # decoder attention
+        tgt = query_feats
+
+        # depth attention
+        # tgt += depth_embed
+        # tgt = self.cross_attn_depth(tgt + query_embed, depth_embed + query_embed, depth_embed)[0]
+
+        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
+                                                                        query_pos=query_embed, **kwargs)
+        B = len(kwargs['targets'])
+        num_layer, num_elm, batch_num_win, dim = hs_win.shape
+        hs_win = hs_win.reshape(num_layer, num_elm, B, -1, dim).transpose(1, 2)
+        hs = hs_win.reshape(num_layer, B, -1, dim)
+        return hs
         
 
 class TransformerEncoder(nn.Module):

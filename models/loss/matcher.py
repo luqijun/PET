@@ -22,7 +22,7 @@ class HungarianMatcher(nn.Module):
 
     @torch.no_grad()
     def forward(self, outputs, targets, **kwargs):
-        """ 
+        """
         Performs the matching
 
         Params:
