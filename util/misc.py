@@ -256,6 +256,7 @@ def collate_fn(batch):
 
             # depth pad
             tgt['depth'] = torch.nn.functional.pad(tgt['depth'], (0, pad_w, 0, pad_h))
+            tgt['depth_encoding'] = torch.nn.functional.pad(tgt['depth_encoding'], (0, pad_w, 0, pad_h))
 
         # depth level
         # img_depth = tgt['depth']

@@ -12,7 +12,7 @@ from .transformer import *
 from .position_encoding import build_position_encoding
 from .utils import pos2posemb1d
 from .loss import build_criterion
-from .base_pet import PETDecoder
+from .pet_decoder import PETDecoder
 
 
 class PET(nn.Module):
@@ -78,19 +78,13 @@ class PET(nn.Module):
         dense_input_embed = self.pos_embed(samples)
         kwargs['dense_input_embed'] = dense_input_embed
 
-        # depth embedding
-        depth_embed = torch.cat([pos2posemb1d(tgt['depth']) for tgt in kwargs['targets']])
-        #kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
-        kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
+        # depth embedding B * 1 * h * w
+        # depth_embed = torch.cat([tgt['depth_encoding'] for tgt in kwargs['targets']]).unsqueeze(1)
+        # kwargs['dense_input_embed'] = kwargs['dense_input_embed'] + depth_embed
+        kwargs['depth_input_embed'] = kwargs['dense_input_embed']
 
-        # dense_input_depth = torch.cat([tgt['depth'].unsqueeze(0) for tgt in kwargs['targets']])
-        # dense_input_depth = nested_tensor_from_tensor_list(dense_input_depth.repeat(1, 3, 1, 1))
-        # features['4x'].tensors += depth_features['4x'].tensors
-        # features['8x'].tensors += depth_features['8x'].tensors
-
-        # features = features + depth_features
-        # kwargs['dense_input_embed'] = dense_input_embed + dense_input_depth
-        # kwargs['dense_input_embed'] = dense_input_embed + (dense_input_depth - 0.5) * 2
+        # depth_embed = torch.cat([pos2posemb1d(tgt['depth']) for tgt in kwargs['targets']])
+        # kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
 
         # feature projection
         features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)

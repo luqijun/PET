@@ -103,6 +103,7 @@ class SHA(Dataset):
         depth = img_depth[:, h_coords, w_coords]
         target['depth'] = img_depth
         target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
+        target['depth_encoding'] = self.encode_depth(img_depth, 8)
         # depth_weight = torch.clamp(1 - depth, min=0.1, max=0.9)
         # target['depth_weight'] = depth_weight / 8
 
@@ -133,6 +134,21 @@ class SHA(Dataset):
             mask = (x >= lower_bound) & (x < upper_bound)  # 创建一个布尔掩码
             result[mask] = values[i]  # 根据掩码赋值
         return result
+
+    def encode_depth(self, img_depth, levels):
+
+        # 划分为多个层级
+        partitions = torch.linspace(0, 1, levels + 1)  # 在（0，1）之间均匀划分为n个部分
+        result = torch.zeros_like(img_depth, device=img_depth.device)
+        for i in range(len(partitions) - 1):
+            lower_bound = partitions[i]
+            upper_bound = partitions[i + 1]
+            value = (partitions[i] + partitions[i + 1]) / 2
+            mask = (img_depth >= lower_bound) & (img_depth < upper_bound)  # 创建一个布尔掩码
+            result[mask] = 0.1 * value  # 根据掩码赋值
+
+        return result
+
 
 
 def load_data(img_gt_path, train):
