@@ -8,6 +8,7 @@ import cv2
 import glob
 import scipy.io as io
 import torchvision.transforms as standard_transforms
+from util.misc import save_tensor_to_image
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -70,6 +71,7 @@ class SHA(Dataset):
 
         img = torch.Tensor(img)
         # random scale
+        scale = 1.0
         if self.train:
             scale_range = [0.8, 1.2]           
             min_size = min(img.shape[1:])
@@ -104,6 +106,7 @@ class SHA(Dataset):
         target['depth'] = img_depth
         target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
         target['depth_encoding'] = self.encode_depth(img_depth, 8)
+        target['seg_map'] = self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
         # depth_weight = torch.clamp(1 - depth, min=0.1, max=0.9)
         # target['depth_weight'] = depth_weight / 8
 
@@ -114,6 +117,22 @@ class SHA(Dataset):
             target['image_path'] = img_path
 
         return img, target
+
+    def get_seg_map(self, points, depth, shape, scale):
+
+        H, W = shape
+        result = torch.zeros(shape)
+        for point, d_p in zip(points, depth.squeeze(0)):
+            point = point.round() - 1
+            y, x = point
+            head_size = 60 * d_p * scale
+            head_size = max(head_size, 8)
+            y1 = torch.clamp(y - head_size // 2, max=H, min=0).long()
+            y2 = torch.clamp(y + head_size // 2, max=H, min=0).long()
+            x1 = torch.clamp(x - head_size // 2, max=W, min=0).long()
+            x2 = torch.clamp(x + head_size // 2, max=W, min=0).long()
+            result[y1:y2, x1:x2] = 1
+        return result
 
     def cal_depth_weight(self, depth_values, values):
 
