@@ -32,35 +32,22 @@ def generate_depth_image(path):
             # depth_img = np.array(depth)
 
 
-min_value = 1e9
-max_value = -1e9
+max_resolution = -1 # W*H ===> Train:(1024, 768) IMG_1.jpg Test:(1024, 768) IMG_1.jpg 
 
-def get_max_min_value(path):
-    global min_value
-    global max_value
+def get_max_resolution(path):
+    global max_resolution
     
-    for folder in ['train_data', 'test_data']:
-        images_path = os.path.join(path, folder, 'images_depth')
-        annotations_path = os.path.join(path, folder, 'ground-truth')
+    
+    for folder in ['test_data']:
+        images_path = os.path.join(path, folder, 'images')
+        # images_depth_path = os.path.join(path, folder, 'images_depth')
+        # os.makedirs(images_depth_path, exist_ok=True)
         for filename in os.listdir(images_path):
             image = Image.open(os.path.join(images_path, filename))
-            image = np.array(image)
-            
-            mat = loadmat(os.path.join(annotations_path, 'GT_' + filename.replace('.jpg', '.mat')))
-            points = mat["image_info"][0, 0][0, 0][0]
-            for point in points:
-                x, y = point
-                x = round(x) - 1
-                y = round(y) - 1
-                depth_value = image[y, x]
-                
-                if min_value > depth_value:
-                    min_value = depth_value
-                if max_value < depth_value:
-                    max_value = depth_value
-            
-    print("min value = ", str(min_value)) # 0
-    print("max value = ", str(max_value)) # 254
+            resolution = image.width * image.height
+            if resolution > max_resolution:
+                max_resolution = resolution
+                print("max resolution = ", f'({str(image.width)}, {str(image.height)})', filename)
 
 
 if __name__ == '__main__':
@@ -68,7 +55,8 @@ if __name__ == '__main__':
     # root_test = '/mnt/c/Users/lqjun/Desktop'
     
     root = '/mnt/e/MyDocs/Code/Datasets/ShangHaiTech/ShanghaiTech/part_B_final'
-    generate_depth_image(root)
+    # generate_depth_image(root)
+    get_max_resolution(root)
     # print('Generate Success!')
     
     # get_max_min_value(root)

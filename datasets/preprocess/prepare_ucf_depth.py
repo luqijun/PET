@@ -35,11 +35,6 @@ def generate_depth_image(path):
             depth.save(depth_save_path)
             # depth_img = np.array(depth)
 
-
-min_value = 1e9
-max_value = -1e9
-
-def get_max_min_value(path):
     global min_value
     global max_value
     
@@ -66,13 +61,28 @@ def get_max_min_value(path):
     print("min value = ", str(min_value)) # 0
     print("max value = ", str(max_value)) # 254
 
+max_resolution = -1 # W*H ===> Train:(6666, 9999) Test:(7360, 4912) 
+
+def get_max_resolution(path):
+    global max_resolution
+    
+    for folder in ['Test']:
+        images_path = os.path.join(path, folder)
+        image_files = glob.glob(os.path.join(images_path, '*.jpg'))
+        for full_file_name in tqdm(image_files):
+            image = Image.open(full_file_name)
+            resolution = image.width * image.height
+            if resolution > max_resolution:
+                max_resolution = resolution
+                print("max resolution = ", f'({str(image.width)}, {str(image.height)})', full_file_name)
 
 if __name__ == '__main__':
     
     # root_test = '/mnt/c/Users/lqjun/Desktop'
     
     root = '/mnt/e/MyDocs/Code/Datasets/UCF-QNRF/UCF-QNRF_ECCV18'
-    generate_depth_image(root)
+    # generate_depth_image(root)
+    get_max_resolution(root)
     # print('Generate Success!')
     
     # get_max_min_value(root)
