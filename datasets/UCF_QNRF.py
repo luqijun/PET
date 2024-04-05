@@ -27,7 +27,7 @@ class UCF_QNRF(Dataset):
             img_name = os.path.basename(img_path)
             gt_path =  img_path.replace(".jpg", "_ann.mat")
             self.gt_list[img_path] = gt_path
-            self.img_list_depth.append(os.path.join(data_root, f'Train_Depth', img_name))
+            self.img_list_depth.append(os.path.join(data_root, f'{prefix}_Depth', img_name))
         self.img_list = sorted(list(self.gt_list.keys()))
         self.nSamples = len(self.img_list)
 
@@ -68,7 +68,10 @@ class UCF_QNRF(Dataset):
             img = self.transform(img)
             img_depth = self.pil_to_tensor(img_depth)
 
-        img = torch.Tensor(img)
+        # rescale
+        img, img_depth, points = self.rescale(img, img_depth, points)
+
+        # img = torch.Tensor(img)
         # random scale
         if self.train:
             scale_range = [0.8, 1.2]           
@@ -115,6 +118,20 @@ class UCF_QNRF(Dataset):
 
         return img, target
 
+    def rescale(self, img, img_depth, points):
+        max_size = 1024
+        H, W = img.shape[-2:]
+
+        scale = max(H / max_size, W / max_size)
+        if scale > 1.0:
+            scale_reverse = 1/scale
+            img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale_reverse).squeeze(0)
+            img_depth = torch.nn.functional.upsample_bilinear(img_depth.unsqueeze(0), scale_factor=scale_reverse).squeeze(0)
+            points = points * scale_reverse
+
+        return img, img_depth, points
+
+
     def cal_depth_weight(self, depth_values, values):
 
         num_parts = len(values) + 1
@@ -157,7 +174,7 @@ def load_data(img_gt_path, train):
     img = cv2.imread(img_path)
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     img_depth = Image.open(img_depth_path)
-    points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]
+    points = io.loadmat(gt_path)['annPoints'][:,::-1]
     return img, img_depth, points
 
 
