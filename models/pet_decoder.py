@@ -96,9 +96,6 @@ class PETDecoder(nn.Module):
         depth_embed_win = window_partition(depth_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
-        points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
-        points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
-
         if 'test' in kwargs:
             # dynamic point query generation
             div = kwargs['div']
@@ -109,11 +106,15 @@ class PETDecoder(nn.Module):
             query_embed_win = query_embed_win[:, v_idx]
             query_feats_win = query_feats_win[:, v_idx]
             depth_embed_win = depth_embed_win[:, v_idx]
+
+            points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
+            points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
+
             points_queries_win = points_queries_win.to(v_idx.device)
             points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
         else:
             v_idx = torch.ones(query_embed_win.shape[1], device=query_embed_win.device).bool()
-            points_queries_win = points_queries_win.reshape(-1, 2)
+            points_queries_win = points_queries
 
         return query_embed_win, points_queries_win, query_feats_win, v_idx, depth_embed_win
 
