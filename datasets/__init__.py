@@ -9,8 +9,8 @@ from .JHU import build as build_jhu
 data_path = {
     'SHA': './data/ShanghaiTech/part_A/',
     'SHB': './data/ShanghaiTech/part_B/',
-    'UCF_QNRF': './data/ShanghaiTech/UCF_QNRF/',
-    'JHU': './data/ShanghaiTech/JHU/',
+    'UCF_QNRF': './data/UCF_QNRF/',
+    'JHU': './data/JHU/',
 }
 
 def build_dataset(image_set, args):
