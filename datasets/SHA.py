@@ -109,6 +109,8 @@ class SHA(Dataset):
         target['seg_map'] = self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
         # depth_weight = torch.clamp(1 - depth, min=0.1, max=0.9)
         # target['depth_weight'] = depth_weight / 8
+        # save_tensor_to_image(target['seg_map'], '/mnt/c/Users/lqjun/Desktop/test.png')
+        # save_tensor_to_image(img, '/mnt/c/Users/lqjun/Desktop/test1.png')
 
         if self.train:
             density = self.compute_density(points)

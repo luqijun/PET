@@ -119,15 +119,20 @@ class WinDecoderTransformer(nn.Module):
 
         hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
                                                                         query_pos=query_embed, **kwargs)
-        if 'test' in kwargs:
-            B = len(kwargs['targets'])
-            num_layer, num_elm, batch_num_win, dim = hs_win.shape
-            hs_win = hs_win.reshape(num_layer, num_elm, B, -1, dim).transpose(1, 2)
-            hs = hs_win.reshape(num_layer, B, -1, dim)
-        else:
-            qH, qW = kwargs['div'].shape[-2:]
-            hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW).permute(1, 0, 2) for hs_w in hs_win]
-            hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
+
+        B = len(kwargs['targets'])
+        num_layer, num_elm, batch_num_win, dim = hs_win.shape
+        hs_win = hs_win.reshape(num_layer, num_elm, B, -1, dim).transpose(1, 2)
+        hs = hs_win.reshape(num_layer, B, -1, dim)
+        # if 'test' in kwargs:
+        #     B = len(kwargs['targets'])
+        #     num_layer, num_elm, batch_num_win, dim = hs_win.shape
+        #     hs_win = hs_win.reshape(num_layer, num_elm, B, -1, dim).transpose(1, 2)
+        #     hs = hs_win.reshape(num_layer, B, -1, dim)
+        # else:
+        #     qH, qW = kwargs['div'].shape[-2:]
+        #     hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW).permute(1, 0, 2) for hs_w in hs_win]
+        #     hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
         return hs
         
 

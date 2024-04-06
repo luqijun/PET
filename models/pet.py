@@ -4,6 +4,7 @@ PET model
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.init import normal_
 
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
@@ -65,7 +66,12 @@ class PET(nn.Module):
             nn.Linear(backbone.num_channels, backbone.num_channels),
         )
 
+        # level embeding
+        self.level_embed = nn.Parameter(
+            torch.Tensor(2, backbone.num_channels))
+
         self.bce_loss = nn.BCEWithLogitsLoss()
+        normal_(self.level_embed)
 
     def forward(self, samples: NestedTensor, **kwargs):
         """
@@ -157,6 +163,7 @@ class PET(nn.Module):
 
         # apply seg head
         seg_map = self.seg_head(encode_src)
+        kwargs['seg_map'] = seg_map
 
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
@@ -168,6 +175,8 @@ class PET(nn.Module):
 
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
+            # level embeding
+            kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
@@ -176,6 +185,8 @@ class PET(nn.Module):
 
         # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
+            # level embeding
+            kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
@@ -239,7 +250,8 @@ class PET(nn.Module):
         gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
         gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
         loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.5
+        losses += loss_seg_map * 0.1
+        loss_dict['loss_seg_map'] = loss_seg_map * 0.1
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']
@@ -251,8 +263,9 @@ class PET(nn.Module):
             gt_depth_levels.append(depth_level)
         gt_depth_levels = torch.cat(gt_depth_levels, dim=0)
         loss_split_depth = F.binary_cross_entropy(pred_depth_levels.float().squeeze(1), gt_depth_levels)
-        loss_split = loss_split_depth
-        losses += loss_split * 0.5
+        loss_split = loss_split_depth * 0.1
+        losses += loss_split
+        loss_dict['loss_split_depth'] = loss_split
 
         # # quadtree splitter loss
         # den = torch.tensor([target['density'] for target in targets])   # crowd density

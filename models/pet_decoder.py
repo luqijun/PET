@@ -62,6 +62,11 @@ class PETDecoder(nn.Module):
         # dense position encoding at every pixel location
         depth_input_embed = kwargs['depth_input_embed']  # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
+
+        if 'level_embed' in kwargs:
+            level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
+            dense_input_embed = dense_input_embed + level_embed
+
         bs, c = dense_input_embed.shape[:2]
 
         # get image shape
@@ -95,26 +100,38 @@ class PETDecoder(nn.Module):
         query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
         depth_embed_win = window_partition(depth_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
+        points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
+        points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
+
+        thrs = 0.5
+        # epoch = kwargs['epoch'] if 'epoch' in kwargs else 1e9
+        v_seg_idx = None
+        # if 'test' in kwargs: #epoch >= 0:
+        #     seg_map = kwargs['seg_map']
+        #     seg_map = F.interpolate(seg_map, size=(h, w))
+        #     seg_map_win = window_partition(seg_map, window_size_h=dec_win_h, window_size_w=dec_win_w)
+        #     valid_seg_map = (seg_map_win > thrs).sum(dim=0)[:, 0]
+        #     v_seg_idx = valid_seg_map > 0
+        #     v_idx = v_seg_idx
+        # else:
+        #     v_idx = torch.ones(query_embed_win.shape[1], device=query_embed_win.device).bool()
+
+        v_idx = torch.ones(query_embed_win.shape[1], device=query_embed_win.device).bool()
 
         if 'test' in kwargs:
             # dynamic point query generation
             div = kwargs['div']
-            thrs = 0.5
             div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
             valid_div = (div_win > thrs).sum(dim=0)[:, 0]
             v_idx = valid_div > 0
-            query_embed_win = query_embed_win[:, v_idx]
-            query_feats_win = query_feats_win[:, v_idx]
-            depth_embed_win = depth_embed_win[:, v_idx]
+            if v_seg_idx:
+                v_idx = v_idx & v_seg_idx
 
-            points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
-            points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
-
-            points_queries_win = points_queries_win.to(v_idx.device)
-            points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
-        else:
-            v_idx = torch.ones(query_embed_win.shape[1], device=query_embed_win.device).bool()
-            points_queries_win = points_queries
+        query_embed_win = query_embed_win[:, v_idx]
+        query_feats_win = query_feats_win[:, v_idx]
+        depth_embed_win = depth_embed_win[:, v_idx]
+        points_queries_win = points_queries_win.to(v_idx.device)
+        points_queries_win = points_queries_win[:, v_idx[:points_queries_win.shape[1]]].reshape(-1, 2)
 
         return query_embed_win, points_queries_win, query_feats_win, v_idx, depth_embed_win
 
