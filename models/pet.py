@@ -4,6 +4,7 @@ PET model and criterion classes
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.init import normal_
 
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
@@ -14,6 +15,7 @@ from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
 from .utils import pos2posemb1d
+from .layers import Segmentation_Head
     
 
 class PET(nn.Module):
@@ -40,6 +42,9 @@ class PET(nn.Module):
         enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
         args.enc_layers = len(enc_win_list)
         self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
+        
+        # segmentation
+        self.seg_head = Segmentation_Head(args.hidden_dim, 1)
 
         # quadtree splitter
         context_patch = (128, 64)
@@ -62,6 +67,8 @@ class PET(nn.Module):
             nn.ReLU(),
             nn.Linear(backbone.num_channels, backbone.num_channels),
         )
+        
+        self.bce_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, samples: NestedTensor, **kwargs):
         """
@@ -148,6 +155,9 @@ class PET(nn.Module):
         encode_src = self.context_encoder(src, src_pos_embed, mask)
         context_info = (encode_src, src_pos_embed, mask)
         
+        # apply seg head
+        seg_map = self.seg_head(encode_src)
+        
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
@@ -173,12 +183,13 @@ class PET(nn.Module):
             outputs_dense = None
         
         # format outputs
-        outputs = dict()
+        outputs = dict(seg_map=None)
         outputs['sparse'] = outputs_sparse
         outputs['dense'] = outputs_dense
         outputs['split_map_raw'] = split_map
         outputs['split_map_sparse'] = split_map_sparse
         outputs['split_map_dense'] = split_map_dense
+        outputs['seg_map'] = seg_map
         return outputs
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
@@ -222,6 +233,14 @@ class PET(nn.Module):
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
+        
+        # seg head loss
+        seg_map = outputs['seg_map']
+        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+        losses += loss_seg_map * 0.1
+        loss_dict['loss_seg_map'] = loss_seg_map * 0.1
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']
@@ -237,6 +256,7 @@ class PET(nn.Module):
         loss_split_depth = F.binary_cross_entropy(pred_depth_levels.float().squeeze(1), gt_depth_levels)
         loss_split = loss_split_depth
         losses += loss_split * 0.1
+        loss_dict['loss_split_depth'] = loss_split
 
         # # quadtree splitter loss
         # den = torch.tensor([target['density'] for target in targets])   # crowd density
