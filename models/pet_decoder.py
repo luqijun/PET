@@ -68,6 +68,11 @@ class PETDecoder(nn.Module):
         # dense position encoding at every pixel location
         depth_input_embed = kwargs['depth_input_embed'] # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
+        
+        if 'level_embed' in kwargs:
+            level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
+            dense_input_embed = dense_input_embed + level_embed
+        
         bs, c = dense_input_embed.shape[:2]
 
         # get image shape
@@ -106,6 +111,11 @@ class PETDecoder(nn.Module):
         # dense position encoding at every pixel location
         depth_input_embed = kwargs['depth_input_embed']  # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
+        
+        if 'level_embed' in kwargs:
+            level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
+            dense_input_embed = dense_input_embed + level_embed
+        
         bs, c = dense_input_embed.shape[:2]
 
         # get image shape
@@ -152,7 +162,6 @@ class PETDecoder(nn.Module):
         depth_embed_win = depth_embed_win[:, v_idx]
         points_queries_win = points_queries_win.to(v_idx.device)
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
-        # points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx, depth_embed_win
 

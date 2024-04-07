@@ -68,7 +68,12 @@ class PET(nn.Module):
             nn.Linear(backbone.num_channels, backbone.num_channels),
         )
         
+        # level embeding
+        self.level_embed = nn.Parameter(
+            torch.Tensor(2, backbone.num_channels))
+
         self.bce_loss = nn.BCEWithLogitsLoss()
+        normal_(self.level_embed)
 
     def forward(self, samples: NestedTensor, **kwargs):
         """
@@ -168,6 +173,8 @@ class PET(nn.Module):
         
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
+            # level embeding
+            kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
@@ -176,6 +183,8 @@ class PET(nn.Module):
         
         # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
+            # level embeding
+            kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
