@@ -214,7 +214,7 @@ def main(args):
                 f.write(json.dumps(log_stats) + "\n")
 
         # evaluation
-        if epoch > args.eval_start and epoch % args.eval_freq == 0 and epoch > 0:
+        if epoch >= args.eval_start and epoch % args.eval_freq == 0 and epoch >= 0:
             t1 = time.time()
             test_stats = evaluate(model, data_loader_val, device, epoch, None)
             t2 = time.time()

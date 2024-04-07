@@ -14,6 +14,7 @@ from typing import Optional, List
 import torch
 import torch.distributed as dist
 from torch import Tensor
+from torchvision.utils import save_image
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
@@ -21,6 +22,9 @@ if float(torchvision.__version__.split(".")[1]) < 7.0:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
 
+
+def save_tensor_to_image(tensor, save_path):
+    save_image(tensor, save_path)
 
 class SmoothedValue(object):
     """
