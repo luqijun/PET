@@ -67,6 +67,7 @@ class PET(nn.Module):
             nn.ReLU(),
             nn.Linear(backbone.num_channels, backbone.num_channels),
         )
+        self.split_depth_th = 0.4
         
         # level embeding
         self.level_embed = nn.Parameter(
@@ -141,7 +142,12 @@ class PET(nn.Module):
                         [out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
             else:
                 div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
-        div_out['split_map_raw'] = outputs['split_map_raw']
+
+        gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > self.split_depth_th).long()
+        div_out['gt_split_map'] = gt_split_map
+        div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
+        div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
+        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -257,7 +263,7 @@ class PET(nn.Module):
         for tgt in targets:
             depth = F.adaptive_avg_pool2d(tgt['depth'], pred_depth_levels.shape[-2:])
             depth_level = torch.ones(depth.shape, device=depth.device)
-            depth_level[depth > 0.4] = 0
+            depth_level[depth > self.split_depth_th] = 0
             gt_depth_levels.append(depth_level)
         gt_depth_levels = torch.cat(gt_depth_levels, dim=0)
         # gt_depth_levels = torch.cat([target['depth_level'] for target in targets], dim=0)

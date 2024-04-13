@@ -26,8 +26,21 @@ class DeNormalize(object):
             t.mul_(s).add_(m)
         return tensor
 
+def save_split_map(save_path, gt_map, pred_map):
 
-def visualization(samples, targets, pred, vis_dir, split_map=None):
+    # 创建一个全零的数组作为间隔
+    H, W = gt_map.shape
+    gap = np.zeros((H, 10))
+
+    # 使用 numpy.concatenate 拼接 gt、间隔和 pred
+    combined = np.concatenate((gt_map, gap, pred_map), axis=1) * 255  # 按宽度（W）方向拼接
+    combined = combined.astype(np.uint8)
+
+    # 使用 cv2.imwrite 保存图像
+    cv2.imwrite(save_path, combined)
+
+
+def visualization(samples, targets, pred, vis_dir, gt_split_map=None, gt_seg_head_map=None, pred_split_map=None, pred_seg_head_map=None, **kwargs):
     """
     Visualize predictions
     """
@@ -55,14 +68,17 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
         # draw predictions (green)
         for p in pred[idx]:
             sample_vis = cv2.circle(sample_vis, (int(p[1]), int(p[0])), size, (0, 255, 0), -1)
-        
+
+        name = targets[idx]['image_path'].split('/')[-1].split('.')[0]
         # draw split map
-        if split_map is not None:
-            imgH, imgW = sample_vis.shape[:2]
-            split_map = (split_map * 255).astype(np.uint8)
-            split_map = cv2.applyColorMap(split_map, cv2.COLORMAP_JET)
-            split_map = cv2.resize(split_map, (imgW, imgH), interpolation=cv2.INTER_NEAREST)
-            sample_vis = split_map * 0.9 + sample_vis
+        if pred_split_map is not None:
+            save_path = os.path.join(vis_dir, '{}_gt{}_pred{}_split_map.jpg'.format(name, len(gts[idx]), len(pred[idx])))
+            save_split_map(save_path, gt_split_map, pred_split_map)
+
+        # draw seg_head_map map
+        if pred_seg_head_map is not None:
+            save_path = os.path.join(vis_dir, '{}_gt{}_pred{}_seg_head_map.jpg'.format(name, len(gts[idx]), len(pred[idx])))
+            save_split_map(save_path, gt_seg_head_map, pred_seg_head_map)
         
         # save image
         if vis_dir is not None:
@@ -71,8 +87,6 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
             valid_area = torch.where(~masks[idx])
             valid_h, valid_w = valid_area[0][-1], valid_area[1][-1]
             sample_vis = sample_vis[:valid_h+1, :valid_w+1]
-
-            name = targets[idx]['image_path'].split('/')[-1].split('.')[0]
             cv2.imwrite(os.path.join(vis_dir, '{}_gt{}_pred{}.jpg'.format(name, len(gts[idx]), len(pred[idx]))), sample_vis)
 
 
@@ -169,8 +183,13 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         # visualize predictions
         if vis_dir: 
             points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
-            split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
-            visualization(samples, targets, [points], vis_dir, split_map=split_map)
+            gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
+            gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
+            pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            visualization(samples, targets, [points], vis_dir,
+                          gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
+                          pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
