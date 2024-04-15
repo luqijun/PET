@@ -50,7 +50,8 @@ class PET(nn.Module):
         context_patch = (128, 64)
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
         self.quadtree_splitter = nn.Sequential(
-            nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=(context_h, context_w), stride=(context_h ,context_w)),
+            # nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
             nn.Conv2d(hidden_dim, 1, 1),
             nn.Sigmoid(),
         )
@@ -146,8 +147,10 @@ class PET(nn.Module):
         gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > self.split_depth_th).long()
         div_out['gt_split_map'] = gt_split_map
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
-        div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        if outputs['split_map_raw'] is not None:
+            div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
+        if outputs['seg_map'] is not None:
+            div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -167,7 +170,7 @@ class PET(nn.Module):
         context_info = (encode_src, src_pos_embed, mask)
         
         # apply seg head
-        seg_map = self.seg_head(encode_src)
+        seg_map = None# self.seg_head(encode_src)
         
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
@@ -180,7 +183,7 @@ class PET(nn.Module):
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             # level embeding
-            kwargs['level_embed'] = self.level_embed[0]
+            # kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
@@ -190,7 +193,7 @@ class PET(nn.Module):
         # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
             # level embeding
-            kwargs['level_embed'] = self.level_embed[1]
+            # kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
@@ -249,29 +252,40 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
         
-        # seg head loss
-        seg_map = outputs['seg_map']
-        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map * 0.1
+        # # seg head loss
+        # seg_map = outputs['seg_map']
+        # gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+        # gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+        # loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+        # losses += loss_seg_map * 0.1
+        # loss_dict['loss_seg_map'] = loss_seg_map * 0.1
 
-        # splitter depth loss
-        pred_depth_levels = outputs['split_map_raw']
-        gt_depth_levels = []
-        for tgt in targets:
-            depth = F.adaptive_avg_pool2d(tgt['depth'], pred_depth_levels.shape[-2:])
-            depth_level = torch.ones(depth.shape, device=depth.device)
-            depth_level[depth > self.split_depth_th] = 0
-            gt_depth_levels.append(depth_level)
-        gt_depth_levels = torch.cat(gt_depth_levels, dim=0)
-        # gt_depth_levels = torch.cat([target['depth_level'] for target in targets], dim=0)
-        # pred_depth_levels = F.interpolate(outputs['split_map_raw'], size=gt_depth_levels.shape[-2:])
-        loss_split_depth = F.binary_cross_entropy(pred_depth_levels.float().squeeze(1), gt_depth_levels)
-        loss_split = loss_split_depth
-        losses += loss_split * 0.1
-        loss_dict['loss_split_depth'] = loss_split
+        if epoch >= warmup_ep:
+            # splitter loss by error
+            sparse_win_pred_count_error = output_sparse['win_pred_count_error']
+            dense_win_pred_count_error = output_dense['win_pred_count_error']
+            pred_count_errors = torch.stack([sparse_win_pred_count_error, dense_win_pred_count_error], dim=1)
+            _, win_idxs = torch.min(pred_count_errors, dim=1)
+            pred_split_map = outputs['split_map_raw'].flatten()
+            loss_split = F.binary_cross_entropy(pred_split_map, win_idxs.float())
+            losses += loss_split * 0.1
+            loss_dict['loss_split_error'] = loss_split
+
+        # # splitter loss by depth
+        # pred_depth_levels = outputs['split_map_raw']
+        # gt_depth_levels = []
+        # for tgt in targets:
+        #     depth = F.adaptive_avg_pool2d(tgt['depth'], pred_depth_levels.shape[-2:])
+        #     depth_level = torch.ones(depth.shape, device=depth.device)
+        #     depth_level[depth > self.split_depth_th] = 0
+        #     gt_depth_levels.append(depth_level)
+        # gt_depth_levels = torch.cat(gt_depth_levels, dim=0)
+        # # gt_depth_levels = torch.cat([target['depth_level'] for target in targets], dim=0)
+        # # pred_depth_levels = F.interpolate(outputs['split_map_raw'], size=gt_depth_levels.shape[-2:])
+        # loss_split_depth = F.binary_cross_entropy(pred_depth_levels.float().squeeze(1), gt_depth_levels)
+        # loss_split = loss_split_depth
+        # losses += loss_split * 0.1
+        # loss_dict['loss_split_depth'] = loss_split
 
         # # quadtree splitter loss
         # den = torch.tensor([target['density'] for target in targets])   # crowd density

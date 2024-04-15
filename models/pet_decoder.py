@@ -37,6 +37,30 @@ class PETDecoder(nn.Module):
         # prediction
         points_queries = pqs[1]
         outputs = self.predict(samples, points_queries, hs, **kwargs)
+
+        pred_logits = outputs['pred_logits']
+        pred_scores = torch.nn.functional.softmax(pred_logits, -1)[..., 1]
+
+        if 'train' in kwargs:
+            # calculate counts in each window
+            dec_win_w, dec_win_h = kwargs['dec_win_size']
+            if self.feat_name == '4x':
+                dec_win_w *= 4
+                dec_win_h *= 4
+            q_h, q_w = features[self.feat_name].tensors.shape[-2:]
+            pred_label_map = (pred_scores > 0.5).reshape(-1, q_h, q_w).unsqueeze(1).int()
+            win_pred_label_map = window_partition(pred_label_map, dec_win_h, dec_win_w)
+            win_pred_count = win_pred_label_map.sum(dim=0).squeeze(1)
+
+            scale = 8 if self.feat_name == '8x' else 4
+            tgt_label_map = torch.stack([tgt['label_map'] for tgt in kwargs['targets']], dim=0).unsqueeze(1)
+            win_tgt_label_map = window_partition(tgt_label_map, dec_win_h * scale, dec_win_w * scale)
+            win_tgt_count = win_tgt_label_map.sum(dim=0).squeeze(1)
+
+            # count error in each window
+            win_pred_count_error = (win_pred_count - win_tgt_count).abs()
+            outputs['win_pred_count_error'] = win_pred_count_error
+
         return outputs
 
     def get_point_query(self, samples, features, **kwargs):
