@@ -106,6 +106,9 @@ class SHA(Dataset):
         target['depth'] = img_depth
         target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
         target['seg_map'] = self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
+        target['label_map'] = self.get_label_map(points, img_depth.shape[-2:])
+
+        # save
         # save_tensor_to_image(target['seg_map'], '/mnt/c/Users/lqjun/Desktop/test.png')
         # save_tensor_to_image(img, '/mnt/c/Users/lqjun/Desktop/test1.png')
 
@@ -153,6 +156,17 @@ class SHA(Dataset):
             result[y1:y2, x1:x2] = 1
         return result
 
+    def get_label_map(self, points, shape):
+        H, W = shape
+        points = (points.round() - 1).long()
+        points[:, 0] = torch.clamp(points[:, 0], max=H, min=0)
+        points[:, 1] = torch.clamp(points[:, 1], max=W, min=0)
+
+        result = torch.zeros(shape)
+        result[points[:, 0], points[:, 1]] = 1
+        return result
+
+
 def load_data(img_gt_path, train):
     img_path, img_depth_path, gt_path = img_gt_path
     # load the images
@@ -160,6 +174,8 @@ def load_data(img_gt_path, train):
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     img_depth = Image.open(img_depth_path)
     points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]
+    if train:
+        points = np.unique(points, axis=0)
     return img, img_depth, points
 
 
