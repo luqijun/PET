@@ -9,13 +9,16 @@ import glob
 import scipy.io as io
 import torchvision.transforms as standard_transforms
 import warnings
+import h5py
+
 warnings.filterwarnings('ignore')
 
-class UCF_QNRF(Dataset):
+
+class UCF_QNRF_1024(Dataset):
     def __init__(self, data_root, transform=None, train=False, flip=False):
         self.root_path = data_root
-        
-        prefix = "Train" if train else "Test"
+
+        prefix = "train" if train else "test"
         self.prefix = prefix
         img_path = f"{data_root}/{prefix}"
         self.img_list = glob.glob(os.path.join(img_path, '*.jpg'))
@@ -25,7 +28,7 @@ class UCF_QNRF(Dataset):
         self.img_list_depth = []
         for img_path in self.img_list:
             img_name = os.path.basename(img_path)
-            gt_path =  img_path.replace(".jpg", "_ann.mat")
+            gt_path = img_path.replace(".jpg", ".h5")
             self.gt_list[img_path] = gt_path
             self.img_list_depth.append(os.path.join(data_root, f'{prefix}_Depth', img_name))
         self.img_list = sorted(list(self.gt_list.keys()))
@@ -36,7 +39,7 @@ class UCF_QNRF(Dataset):
         self.train = train
         self.flip = flip
         self.patch_size = 256
-    
+
     def compute_density(self, points):
         """
         Compute crowd density:
@@ -45,7 +48,7 @@ class UCF_QNRF(Dataset):
         points_tensor = points
         dist = torch.cdist(points_tensor, points_tensor, p=2)
         if points_tensor.shape[0] > 1:
-            density = dist.sort(dim=1)[0][:,1].mean().reshape(-1)
+            density = dist.sort(dim=1)[0][:, 1].mean().reshape(-1)
         else:
             density = torch.tensor(999.0).reshape(-1)
         return density
@@ -74,12 +77,12 @@ class UCF_QNRF(Dataset):
         # img = torch.Tensor(img)
         # random scale
         if self.train:
-            scale_range = [0.8, 1.2]           
+            scale_range = [0.8, 1.2]
             min_size = min(img.shape[1:])
             scale = random.uniform(*scale_range)
-            
+
             # interpolation
-            if scale * min_size > self.patch_size:  
+            if scale * min_size > self.patch_size:
                 img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
                 img_depth = torch.nn.functional.interpolate(img_depth.unsqueeze(0), scale_factor=scale).squeeze(0)
                 points *= scale
@@ -113,7 +116,7 @@ class UCF_QNRF(Dataset):
         if self.train:
             density = self.compute_density(points)
             target['density'] = density
-        else: # test
+        else:  # test
             target['image_path'] = img_path
 
         return img, target
@@ -124,13 +127,13 @@ class UCF_QNRF(Dataset):
 
         scale = max(H / max_size, W / max_size)
         if scale > 1.0:
-            scale_reverse = 1/scale
+            scale_reverse = 1 / scale
             img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale_reverse).squeeze(0)
-            img_depth = torch.nn.functional.upsample_bilinear(img_depth.unsqueeze(0), scale_factor=scale_reverse).squeeze(0)
+            img_depth = torch.nn.functional.upsample_bilinear(img_depth.unsqueeze(0),
+                                                              scale_factor=scale_reverse).squeeze(0)
             points = points * scale_reverse
 
         return img, img_depth, points
-
 
     def cal_depth_weight(self, depth_values, values):
 
@@ -167,21 +170,22 @@ class UCF_QNRF(Dataset):
         return result
 
 
-
 def load_data(img_gt_path, train):
     img_path, img_depth_path, gt_path = img_gt_path
     # load the images
     img = cv2.imread(img_path)
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     img_depth = Image.open(img_depth_path)
-    points = io.loadmat(gt_path)['annPoints'][:,::-1]
+    with h5py.File(gt_path, 'r') as f:
+        points = f['density'][:]
+    # points = io.loadmat(gt_path)['annPoints'][:, ::-1]
     return img, img_depth, points
 
 
 def random_crop(img, img_depth, points, patch_size=256):
     patch_h = patch_size
     patch_w = patch_size
-    
+
     # random crop
     start_h = random.randint(0, img.size(1) - patch_h) if img.size(1) > patch_h else 0
     start_w = random.randint(0, img.size(2) - patch_w) if img.size(2) > patch_w else 0
@@ -195,10 +199,10 @@ def random_crop(img, img_depth, points, patch_size=256):
     result_points = points[idx]
     result_points[:, 0] -= start_h
     result_points[:, 1] -= start_w
-    
+
     # resize to patchsize
     imgH, imgW = result_img.shape[-2:]
-    fH, fW = patch_h/imgH, patch_w/imgW
+    fH, fW = patch_h / imgH, patch_w / imgW
     result_img = torch.nn.functional.interpolate(result_img.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
     result_img_depth = torch.nn.functional.interpolate(result_img_depth.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
     result_points[:, 0] *= fH
@@ -211,11 +215,11 @@ def build(image_set, args):
         standard_transforms.ToTensor(), standard_transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                       std=[0.229, 0.224, 0.225]),
     ])
-    
+
     data_root = args.data_path
     if image_set == 'train':
-        train_set = UCF_QNRF(data_root, train=True, transform=transform, flip=True)
+        train_set = UCF_QNRF_1024(data_root, train=True, transform=transform, flip=True)
         return train_set
     elif image_set == 'val':
-        val_set = UCF_QNRF(data_root, train=False, transform=transform)
+        val_set = UCF_QNRF_1024(data_root, train=False, transform=transform)
         return val_set

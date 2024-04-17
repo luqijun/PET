@@ -16,7 +16,7 @@ def generate_depth_image(path):
      
     pipe = pipeline(task="depth-estimation", model="LiheYoung/depth-anything-small-hf")
      
-    for folder in ['Train', 'Test']:
+    for folder in ['train', 'val', 'test']:
         images_path = os.path.join(path, folder)
         images_depth_path = os.path.join(path, f'{folder}_Depth')
         os.makedirs(images_depth_path, exist_ok=True)
@@ -71,7 +71,8 @@ if __name__ == '__main__':
     
     # root_test = '/mnt/c/Users/lqjun/Desktop'
     
-    root = '/mnt/e/MyDocs/Code/Datasets/UCF-QNRF/UCF-QNRF_ECCV18'
+    root = '/mnt/e/MyDocs/Code/Datasets/UCF-QNRF/UCF-QNRF_ECCV18-Processed'
+    # root = '/mnt/e/MyDocs/Code/Datasets/UCF-QNRF/qnrf_.1024_a'
     generate_depth_image(root)
     # print('Generate Success!')
     
