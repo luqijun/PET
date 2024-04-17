@@ -22,4 +22,4 @@ class Segmentation_Head(nn.Module):
 
     def forward(self, input):
         output = self.decoder(input)
-        return output.sigmoid()
+        return output
