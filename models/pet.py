@@ -70,11 +70,11 @@ class PET(nn.Module):
         self.split_depth_th = 0.4
         
         # level embeding
-        self.level_embed = nn.Parameter(
-            torch.Tensor(2, backbone.num_channels))
+        # self.level_embed = nn.Parameter(
+        #     torch.Tensor(2, backbone.num_channels))
+        # normal_(self.level_embed)
 
         self.bce_loss = nn.BCEWithLogitsLoss()
-        normal_(self.level_embed)
 
     def forward(self, samples: NestedTensor, **kwargs):
         """
@@ -180,7 +180,7 @@ class PET(nn.Module):
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             # level embeding
-            kwargs['level_embed'] = self.level_embed[0]
+            # kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
@@ -190,7 +190,7 @@ class PET(nn.Module):
         # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
             # level embeding
-            kwargs['level_embed'] = self.level_embed[1]
+            # kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
@@ -255,7 +255,7 @@ class PET(nn.Module):
         gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
         loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
         losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map * 0.1
+        loss_dict['loss_seg_map'] = loss_seg_map
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']
