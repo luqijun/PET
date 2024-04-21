@@ -44,7 +44,7 @@ class PET(nn.Module):
         self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
         
         # segmentation
-        self.seg_head = Segmentation_Head(args.hidden_dim, 1)
+        # self.seg_head = Segmentation_Head(args.hidden_dim, 1)
 
         # quadtree splitter
         context_patch = (128, 64)
@@ -146,8 +146,10 @@ class PET(nn.Module):
         gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > self.split_depth_th).long()
         div_out['gt_split_map'] = gt_split_map
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
-        div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        if outputs['split_map_raw'] is not None:
+            div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
+        if outputs['seg_map'] is not None:
+            div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -167,16 +169,21 @@ class PET(nn.Module):
         context_info = (encode_src, src_pos_embed, mask)
         
         # apply seg head
-        seg_map = self.seg_head(encode_src)
+        seg_map = None # self.seg_head(encode_src)
         
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)        
+        split_map = self.quadtree_splitter(encode_src)
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
-        
+
+        # kwargs['div'] = None # split_map_sparse.reshape(bs, sp_h, sp_w)
+        # kwargs['dec_win_size'] = [16, 8]
+        # outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+        # outputs_dense = None
+
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             # level embeding
@@ -243,19 +250,20 @@ class PET(nn.Module):
         # update loss dict and weight dict
         loss_dict = dict()
         loss_dict.update(loss_dict_sparse)
-        loss_dict.update(loss_dict_dense)
+        # loss_dict.update(loss_dict_dense)
 
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
-        weight_dict.update(weight_dict_dense)
+        # weight_dict.update(weight_dict_dense)
         
         # seg head loss
-        seg_map = outputs['seg_map']
-        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map
+        if 'seg_map' in outputs and outputs['seg_map'] is not None:
+            seg_map = outputs['seg_map']
+            gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+            gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+            loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+            losses += loss_seg_map * 0.1
+            loss_dict['loss_seg_map'] = loss_seg_map
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']

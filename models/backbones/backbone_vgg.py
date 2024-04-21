@@ -11,6 +11,8 @@ from torch import nn
 from util.misc import NestedTensor
 from .vgg import *
 from ..position_encoding import build_position_encoding
+from ..layers import DilatedEncoder
+from typing import Dict
 
 
 class FeatsFusion(nn.Module):
@@ -62,6 +64,10 @@ class BackboneBase_VGG(nn.Module):
         self.return_interm_layers = return_interm_layers
         self.fpn = FeatsFusion(256, 512, 512, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
 
+        # dialated encoder
+        self.dialated_encoder = DilatedEncoder(1024, 256)
+        self.conv_expand = nn.Conv2d(512, 1024, kernel_size=1, stride=1, padding=0)
+
     def forward(self, tensor_list: NestedTensor):
         feats = []
         if self.return_interm_layers:
@@ -69,11 +75,10 @@ class BackboneBase_VGG(nn.Module):
             for idx, layer in enumerate([self.body1, self.body2, self.body3, self.body4]):
                 xs = layer(xs)
                 feats.append(xs)
-                        
-            # feature fusion
-            features_fpn = self.fpn([feats[1], feats[2], feats[3]])
-            features_fpn_4x = features_fpn[0]
-            features_fpn_8x = features_fpn[1]
+
+            feats[3] = self.conv_expand(feats[3])
+            feats[3] = F.interpolate(feats[3], feats[2].shape[-2:])
+            features_fpn_8x, features_fpn_4x  = self.dialated_encoder([feats[1], feats[2], feats[3]])
 
             # get tensor mask
             m = tensor_list.mask
@@ -84,6 +89,21 @@ class BackboneBase_VGG(nn.Module):
             out: Dict[str, NestedTensor] = {}
             out['4x'] = NestedTensor(features_fpn_4x, mask_4x)
             out['8x'] = NestedTensor(features_fpn_8x, mask_8x)
+                        
+            # # feature fusion
+            # features_fpn = self.fpn([feats[1], feats[2], feats[3]])
+            # features_fpn_4x = features_fpn[0]
+            # features_fpn_8x = features_fpn[1]
+            #
+            # # get tensor mask
+            # m = tensor_list.mask
+            # assert m is not None
+            # mask_4x = F.interpolate(m[None].float(), size=features_fpn_4x.shape[-2:]).to(torch.bool)[0]
+            # mask_8x = F.interpolate(m[None].float(), size=features_fpn_8x.shape[-2:]).to(torch.bool)[0]
+            #
+            # out: Dict[str, NestedTensor] = {}
+            # out['4x'] = NestedTensor(features_fpn_4x, mask_4x)
+            # out['8x'] = NestedTensor(features_fpn_8x, mask_8x)
         else:
             xs = self.body(tensor_list)
             out.append(xs)

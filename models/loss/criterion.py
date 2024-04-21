@@ -49,7 +49,7 @@ class SetCriterion(nn.Module):
         target_classes[idx] = target_classes_o
 
         # compute classification loss
-        if 'div' in kwargs:
+        if 'div' in kwargs and kwargs['div'] is not None:
             # get sparse / dense image index
             den = torch.tensor([target['density'] for target in targets])
             den_sort = torch.sort(den)[1]
@@ -107,7 +107,7 @@ class SetCriterion(nn.Module):
         # depth_weights = depth_weights[:len(loss_points_raw)]
         # loss_points_raw *= depth_weights
 
-        if 'div' in kwargs:
+        if 'div' in kwargs and kwargs['div'] is not None:
             # get sparse / dense index
             den = torch.tensor([target['density'] for target in targets])
             den_sort = torch.sort(den)[1]

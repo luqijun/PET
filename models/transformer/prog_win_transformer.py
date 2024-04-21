@@ -139,18 +139,23 @@ class WinDecoderTransformer(nn.Module):
         memory_win, pos_embed_win, mask_win = enc_win_partition(src, pos_embed, mask, 
                                                     int(self.dec_win_h/div_ratio), int(self.dec_win_w/div_ratio))
 
+        # hs = self.decoder_forward(query_feats, query_embed,
+        #                           memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
+        #                           depth_embed, **kwargs)
+        # return hs.transpose(1, 2)
+
         # dynamic decoder forward
         if 'test' in kwargs:
             memory_win = memory_win[:,v_idx]
             pos_embed_win = pos_embed_win[:,v_idx]
             mask_win = mask_win[v_idx]
-            hs = self.decoder_forward_dynamic(query_feats, query_embed, 
+            hs = self.decoder_forward_dynamic(query_feats, query_embed,
                                               memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
                                               depth_embed, **kwargs)
             return hs
         else:
             # decoder forward
-            hs = self.decoder_forward(query_feats, query_embed, 
+            hs = self.decoder_forward(query_feats, query_embed,
                                       memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
                                       depth_embed,  **kwargs)
             return hs.transpose(1, 2)

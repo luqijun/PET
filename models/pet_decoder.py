@@ -18,8 +18,10 @@ class PETDecoder(nn.Module):
         self.transformer = kwargs['transformer']
         hidden_dim = args.hidden_dim
 
-        self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
-        self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        num_points = 1
+        self.num_points = num_points
+        self.class_embed = nn.Linear(hidden_dim, (num_classes + 1) * num_points)
+        self.coord_embed = MLP(hidden_dim, hidden_dim, 2 * num_points, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
@@ -44,6 +46,12 @@ class PETDecoder(nn.Module):
         Generate point query
         """
         src, _ = features[self.feat_name].decompose()
+
+        # query_embed, points_queries, query_feats, depth_embed = self.points_queris_embed(samples, self.pq_stride,
+        #                                                                                  src, **kwargs)
+        # query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
+        # depth_embed = depth_embed.flatten(2).permute(2, 0, 1)
+        # v_idx = None
 
         # generate points queries and position embedding
         if 'train' in kwargs:
@@ -187,8 +195,39 @@ class PETDecoder(nn.Module):
 
         outputs_points = outputs_offsets[-1] + points_queries
         out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets[-1]}
-    
+
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
         return out
+
+        # """
+        # Crowd prediction
+        # """
+        # outputs_class = self.class_embed(hs)
+        # # normalize to 0~1
+        # outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
+        #
+        # # normalize point-query coordinates
+        # img_shape = samples.tensors.shape[-2:]
+        # img_h, img_w = img_shape
+        # points_queries = points_queries.float().cuda()
+        # points_queries[:, 0] /= img_h
+        # points_queries[:, 1] /= img_w
+        # points_queries = torch.repeat_interleave(points_queries, self.num_points, dim=1)
+        #
+        # # rescale offset range during testing
+        # if 'test' in kwargs:
+        #     outputs_offsets[...,0] /= (img_h / 256)
+        #     outputs_offsets[...,1] /= (img_w / 256)
+        #
+        # outputs_points = outputs_offsets[-1] + points_queries
+        # bs, feat_num, dim_num = outputs_points.shape
+        # outputs_points = outputs_points.reshape(bs, feat_num * self.num_points, dim_num // self.num_points)
+        # outputs_class = outputs_class[-1].reshape(bs, feat_num * self.num_points, dim_num // self.num_points)
+        # outputs_offsets = outputs_offsets[-1].reshape(bs, feat_num * self.num_points, dim_num // self.num_points)
+        # out = {'pred_logits': outputs_class, 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets}
+        #
+        # out['points_queries'] = points_queries
+        # out['pq_stride'] = self.pq_stride
+        # return out
 
