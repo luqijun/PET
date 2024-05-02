@@ -12,6 +12,99 @@ from util.misc import NestedTensor
 from .vgg import *
 from ..position_encoding import build_position_encoding
 
+def get_activation(act_type=None):
+    if act_type is None:
+        return nn.Identity()
+    elif act_type == 'relu':
+        return nn.ReLU(inplace=True)
+    elif act_type == 'lrelu':
+        return nn.LeakyReLU(0.1, inplace=True)
+    elif act_type == 'mish':
+        return nn.Mish(inplace=True)
+    elif act_type == 'silu':
+        return nn.SiLU(inplace=True)
+
+# Basic conv layer
+class Conv(nn.Module):
+    def __init__(self, c1, c2, k=1, p=0, s=1, d=1, g=1, act_type='relu', depthwise=False, bias=False):
+        super(Conv, self).__init__()
+        if depthwise:
+            assert c1 == c2
+            self.convs = nn.Sequential(
+                nn.Conv2d(c1, c2, k, stride=s, padding=p, dilation=d, groups=c1, bias=bias),
+                nn.BatchNorm2d(c2),
+                get_activation(act_type),
+                nn.Conv2d(c2, c2, kernel_size=1, bias=bias),
+                nn.BatchNorm2d(c2),
+                get_activation(act_type)
+            )
+        else:
+            self.convs = nn.Sequential(
+                nn.Conv2d(c1, c2, k, stride=s, padding=p, dilation=d, groups=g, bias=bias),
+                nn.BatchNorm2d(c2),
+                get_activation(act_type)
+            )
+
+
+    def forward(self, x):
+        return self.convs(x)
+
+class Bottleneck(nn.Module):
+    def __init__(self,
+                 in_dim,
+                 dilation=[4, 8, 12, 16],
+                 expand_ratio=0.25,
+                 act_type='relu'):
+        super(Bottleneck, self).__init__()
+        inter_dim = int(in_dim * expand_ratio)
+        self.branch0 = nn.Sequential(
+            Conv(in_dim, inter_dim, k=1, act_type=act_type),
+            Conv(inter_dim, inter_dim, k=3, p=dilation[0], d=dilation[0], act_type=act_type),
+            Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        )
+        self.branch1 = nn.Sequential(
+            Conv(in_dim, inter_dim, k=1, act_type=act_type),
+            Conv(inter_dim, inter_dim, k=3, p=dilation[1], d=dilation[1], act_type=act_type),
+            Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        )
+        self.branch2 = nn.Sequential(
+            Conv(in_dim, inter_dim, k=1, act_type=act_type),
+            Conv(inter_dim, inter_dim, k=3, p=dilation[2], d=dilation[2], act_type=act_type),
+            Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        )
+        self.branch3 = nn.Sequential(
+            Conv(in_dim, inter_dim, k=1, act_type=act_type),
+            Conv(inter_dim, inter_dim, k=3, p=dilation[3], d=dilation[3], act_type=act_type),
+            Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        )
+        # self.branch4 = nn.Sequential(
+        #     Conv(in_dim, inter_dim, k=1, act_type=act_type),
+        #     Conv(inter_dim, inter_dim, k=3, p=dilation[4], d=dilation[4], act_type=act_type),
+        #     Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        # )
+        # self.branch5 = nn.Sequential(
+        #     Conv(in_dim, inter_dim, k=1, act_type=act_type),
+        #     Conv(inter_dim, inter_dim, k=3, p=dilation[5], d=dilation[5], act_type=act_type),
+        #     Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        # )
+        # self.branch6 = nn.Sequential(
+        #     Conv(in_dim, inter_dim, k=1, act_type=act_type),
+        #     Conv(inter_dim, inter_dim, k=3, p=dilation[6], d=dilation[6], act_type=act_type),
+        #     Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        # )
+        # self.branch7 = nn.Sequential(
+        #     Conv(in_dim, inter_dim, k=1, act_type=act_type),
+        #     Conv(inter_dim, inter_dim, k=3, p=dilation[7], d=dilation[7], act_type=act_type),
+        #     Conv(inter_dim, in_dim, k=1, act_type=act_type)
+        # )
+
+    def forward(self, x):
+        x1 = self.branch0(x) + x
+        x2 = self.branch1(x1 + x) + x1
+        x3 = self.branch2(x2 + x1 + x) + x2
+        x4 = self.branch3(x3 + x2 + x1 + x) + x3
+        return x4
+
 
 class FeatsFusion(nn.Module):
     def __init__(self, C3_size, C4_size, C5_size, hidden_size=256, out_size=256, out_kernel=3):
@@ -25,6 +118,8 @@ class FeatsFusion(nn.Module):
         self.P3_1 = nn.Conv2d(C3_size, hidden_size, kernel_size=1, stride=1, padding=0)
         self.P3_2 = nn.Conv2d(hidden_size, out_size, kernel_size=out_kernel, stride=1, padding=out_kernel//2)
 
+        # self.dense_net = Bottleneck(hidden_size, dilation=[1, 2, 3, 4])
+
     def forward(self, inputs):
         C3, C4, C5 = inputs
         C3_shape, C4_shape, C5_shape = C3.shape[-2:], C4.shape[-2:], C5.shape[-2:]
@@ -34,6 +129,7 @@ class FeatsFusion(nn.Module):
         P5_x = self.P5_2(P5_x)
 
         P4_x = self.P4_1(C4)
+        # P4_x = self.dense_net(P4_x) # Dense Net
         P4_x = P5_upsampled_x + P4_x
         P4_upsampled_x = F.interpolate(P4_x, C3_shape)
         P4_x = self.P4_2(P4_x)
