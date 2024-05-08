@@ -158,7 +158,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         img_h, img_w = samples.tensors.shape[-2:]
 
         # inference
-        outputs = model(samples, test=True, targets=targets)
+        outputs = model(samples, epoch=epoch, test=True, targets=targets)
         outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
         outputs_points = outputs['pred_points'][0]
         outputs_offsets = outputs['pred_offsets'][0]

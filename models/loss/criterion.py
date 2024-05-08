@@ -8,7 +8,7 @@ from torch import nn
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
 import math
-
+from .uncertainty_loss import laplacian_aleatoric_uncertainty_loss, gaussian_aleatoric_uncertainty_loss, laplacian_aleatoric_uncertainty_loss_classification
 
 class SetCriterion(nn.Module):
     """ Compute the loss for PET:
@@ -48,7 +48,11 @@ class SetCriterion(nn.Module):
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
 
-        # compute classification loss
+        # src_log_vars = outputs['log_vars'].squeeze(-1)
+        # raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none')
+        # raw_ce_loss = laplacian_aleatoric_uncertainty_loss_classification(raw_ce_loss, src_log_vars, reduction='None')
+        # loss_ce = 0.1 * raw_ce_loss.mean()
+
         if 'div' in kwargs:
             # get sparse / dense image index
             den = torch.tensor([target['density'] for target in targets])
@@ -61,6 +65,7 @@ class SetCriterion(nn.Module):
             weights = target_classes.clone().float()
             weights[weights == 0] = self.empty_weight[0]
             weights[weights == 1] = self.empty_weight[1]
+
             raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none')
 
             # binarize split map
@@ -92,6 +97,7 @@ class SetCriterion(nn.Module):
         # get indices
         idx = self._get_src_permutation_idx(indices)
         src_points = outputs['pred_points'][idx]
+        src_log_vars = outputs['log_vars'][idx]
         target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         # compute regression loss
@@ -100,42 +106,56 @@ class SetCriterion(nn.Module):
         img_h, img_w = img_shape
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
-
-        # 使用深度权重
-        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
-        # depth_weights = depth_weights[:len(loss_points_raw)]
-        # loss_points_raw *= depth_weights
-
-        if 'div' in kwargs:
-            # get sparse / dense index
-            den = torch.tensor([target['density'] for target in targets])
-            den_sort = torch.sort(den)[1]
-            img_ds_idx = den_sort[:len(den_sort) // 2]
-            img_sp_idx = den_sort[len(den_sort) // 2:]
-            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
-            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
-
-            # dual supervision for sparse/dense images
-            eps = 1e-5
-            split_map = kwargs['div']
-            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
-            div_mask = split_map > div_thrs
-            loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
-            loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
-            loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
-
-            # loss on non-div regions
-            non_div_mask = split_map <= div_thrs
-            loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
-                        non_div_mask[idx].sum() + eps)
-
-            # final point loss
-            losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
+        if outputs['epoch'] >= 120:
+            loss_points_raw = gaussian_aleatoric_uncertainty_loss(src_points, target_points, src_log_vars,reduction='None')
+            losses['loss_points'] = 0.01 * loss_points_raw.sum() / num_points
         else:
-            losses['loss_points'] = loss_points_raw.sum() / num_points
+            loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+
+            # 使用深度权重
+            # loss_points_raw = self.adjust_by_depth_weight(loss_points_raw, targets)
+
+            # depth_weights = (1 - torch.cat([v["depth_weight"] for v in targets], dim=1)).permute(1, 0) * 10
+            # depth_weights = depth_weights[:len(loss_points_raw)]
+            # loss_points_raw *= depth_weights
+
+            if 'div' in kwargs:
+                # get sparse / dense index
+                den = torch.tensor([target['density'] for target in targets])
+                den_sort = torch.sort(den)[1]
+                img_ds_idx = den_sort[:len(den_sort) // 2]
+                img_sp_idx = den_sort[len(den_sort) // 2:]
+                pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
+                pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
+
+                # dual supervision for sparse/dense images
+                eps = 1e-5
+                split_map = kwargs['div']
+                div_thrs = self.div_thrs_dict[outputs['pq_stride']]
+                div_mask = split_map > div_thrs
+                loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
+                loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
+                loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
+
+                # loss on non-div regions
+                non_div_mask = split_map <= div_thrs
+                loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
+                            non_div_mask[idx].sum() + eps)
+
+                # final point loss
+                losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
+            else:
+                losses['loss_points'] = loss_points_raw.sum() / num_points
 
         return losses
+
+    def adjust_by_depth_weight(self, loss_raw, targets):
+        # 使用深度权重
+        depth_weights = (1 - torch.cat([v["depth_weight"] for v in targets], dim=1)).permute(1, 0) * 10
+        depth_weights = depth_weights[:len(loss_raw)]
+        loss_raw *= depth_weights
+        return loss_raw
+
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices

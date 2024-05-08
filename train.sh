@@ -14,9 +14,9 @@ python -m torch.distributed.launch \
     --dim_feedforward=512 \
     --nheads=8 \
     --dropout=0.0 \
-    --epochs=3000 \
+    --epochs=10000 \
     --dataset_file="SHA" \
-    --eval_start=100 \
+    --eval_start=250 \
     --eval_freq=1 \
-    --output_dir='pet_model'
-    # --resume='outputs/SHA/pet_model/checkpoint.pth'
+    --output_dir='pet_model' #\
+    #--resume="outputs/SHA/pet_model/checkpoint.pth"

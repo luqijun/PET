@@ -60,3 +60,20 @@ def mask2pos(mask):
     y_embed = (y_embed - 0.5) / y_embed[:, -1:]
     x_embed = (x_embed - 0.5) / x_embed[:, -1:]
     return y_embed, x_embed
+
+
+
+def freeze_network(model):
+    for param in model.parameters():
+        param.requires_grad = False
+
+def unfreeze_network(model):
+    for param in model.parameters():
+        param.requires_grad = True
+
+def check_freeze_network(model):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Parameter {name} is not frozen.")
+        else:
+            print(f"Parameter {name} is frozen.")

@@ -1,5 +1,6 @@
 from .criterion import *
 from .matcher import build_matcher
+from .uncertainty_loss import *
 
 def build_criterion(args):
     device = torch.device(args.device)

@@ -14,7 +14,7 @@ from .pet_decoder import PETDecoder
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
-from .utils import pos2posemb1d
+from .utils import pos2posemb1d, freeze_network, unfreeze_network, check_freeze_network
 from .layers import Segmentation_Head
     
 
@@ -82,6 +82,16 @@ class PET(nn.Module):
             - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
             - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
         """
+        if 'train' in kwargs:
+            epoch = kwargs['epoch']
+            if 120 == epoch:
+                freeze_network(self)
+                unfreeze_network(self.quadtree_sparse.log_var_embed)
+                unfreeze_network(self.quadtree_dense.log_var_embed)
+                check_freeze_network(self)
+            if 240 == epoch:
+                unfreeze_network(self)
+
         # backbone
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
@@ -250,12 +260,12 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_dense)
         
         # seg head loss
-        seg_map = outputs['seg_map']
-        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map
+        # seg_map = outputs['seg_map']
+        # gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+        # gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+        # loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+        # losses += loss_seg_map * 0.1
+        # loss_dict['loss_seg_map'] = loss_seg_map
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']

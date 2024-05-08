@@ -8,6 +8,21 @@ from torch import nn
 from .layers import *
 from .transformer import *
 
+def weights_init_xavier(m):
+    classname = m.__class__.__name__
+    if classname.find('Linear') != -1:
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
+    elif classname.find('Conv') != -1:
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
+    elif classname.find('BatchNorm') != -1:
+        if m.affine:
+            nn.init.constant_(m.weight, 1.0)
+            nn.init.constant_(m.bias, 0.0)
+
 class PETDecoder(nn.Module):
     """ 
     Base PET model
@@ -18,11 +33,18 @@ class PETDecoder(nn.Module):
         self.transformer = kwargs['transformer']
         hidden_dim = args.hidden_dim
 
+        # self.log_var_embed = nn.Sequential(nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=True),
+        #                              nn.BatchNorm2d(hidden_dim // 2),
+        #                              nn.ReLU(inplace=True),nn.AdaptiveAvgPool2d(1),
+        #                              nn.Conv2d(hidden_dim // 2, 1, kernel_size=1, stride=1, padding=0, bias=True))
+        self.log_var_embed = nn.Sequential(nn.Linear(hidden_dim, 1)) # , nn.ReLU()
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
+
+        self.log_var_embed.apply(weights_init_xavier)
 
     def forward(self, samples, features, context_info, **kwargs):
         encode_src, src_pos_embed, mask = context_info
@@ -37,6 +59,7 @@ class PETDecoder(nn.Module):
         # prediction
         points_queries = pqs[1]
         outputs = self.predict(samples, points_queries, hs, **kwargs)
+        outputs['epoch'] = kwargs['epoch']
         return outputs
 
     def get_point_query(self, samples, features, **kwargs):
@@ -169,6 +192,10 @@ class PETDecoder(nn.Module):
         """
         Crowd prediction
         """
+        # Uncenterinty log var
+        outputs_log_var = self.log_var_embed(hs)
+        outputs_log_var = torch.logsumexp(outputs_log_var, -1, keepdim=True)
+
         outputs_class = self.class_embed(hs)
         # normalize to 0~1
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
@@ -190,5 +217,6 @@ class PETDecoder(nn.Module):
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
+        out['log_vars'] = outputs_log_var[-1]
         return out
 
