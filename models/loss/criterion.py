@@ -48,6 +48,48 @@ class SetCriterion(nn.Module):
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
 
+        # 查找落在分割图中的点
+        # seg_maps = torch.stack([t['seg_map'].round().long() for t in targets], dim=0)
+        # seg_maps = F.interpolate(seg_maps.unsqueeze(1).float(), size=[32, 32], mode='nearest')
+        # target_classes_from_seg = seg_maps.flatten(1).long()
+
+        img_shape = outputs['img_shape']
+        img_h, img_w = img_shape
+
+        # pred_points_single = outputs['pred_points'].clone()
+        # pred_points_single[:, 0] *= img_h
+        # pred_points_single[:, 1] *= img_w
+        # pred_points_single = pred_points_single.long()
+        #
+        # points_clipped = torch.clamp(pred_points_single, min=0, max=255)
+        # seg_map = torch.stack([t['seg_map'] for t in targets])
+        #
+        # points_clipped = points_clipped.unsqueeze(2)
+        # selected_values = torch.gather(seg_map.unsqueeze(1), 2, points_clipped)
+
+        bs = src_logits.shape[0]
+        labels = []
+        for b_idx in range(bs):
+            pred_points_single = outputs['pred_points'][b_idx].clone()
+            pred_points_single[:, 0] *= img_h
+            pred_points_single[:, 1] *= img_w
+            pred_points_single = pred_points_single.long()
+
+            points_clipped = torch.clamp(pred_points_single, min=0, max=255)
+            seg_map =  targets[b_idx]['seg_map']
+            points_in_mask  = seg_map[points_clipped[:, 0], points_clipped[:, 1]]
+            points_in_bounds = (points_clipped == pred_points_single).all(dim=1)
+            filter_mask = points_in_mask.bool() & points_in_bounds
+
+            label = torch.zeros(pred_points_single.shape[0], device=pred_points_single.device)
+            label[filter_mask] = 1
+
+            labels.append(label)
+
+        # 合并
+        labels = torch.stack(labels, dim=0).long()
+        target_classes = target_classes | labels
+
         # compute classification loss
         if 'div' in kwargs:
             # get sparse / dense image index

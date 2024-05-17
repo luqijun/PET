@@ -16,6 +16,7 @@ from .transformer import *
 from .position_encoding import build_position_encoding
 from .utils import pos2posemb1d
 from .layers import Segmentation_Head
+from .nms import get_box_from_depth, nms_on_boxes
     
 
 class PET(nn.Module):
@@ -44,7 +45,7 @@ class PET(nn.Module):
         self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
         
         # segmentation
-        self.seg_head = Segmentation_Head(args.hidden_dim, 1)
+        # self.seg_head = Segmentation_Head(args.hidden_dim, 1)
 
         # quadtree splitter
         context_patch = (128, 64)
@@ -112,19 +113,52 @@ class PET(nn.Module):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
 
+        targets = kwargs['targets']
+        depth_map = torch.cat([t['depth'] for t in targets])
+        img_shape = depth_map.shape[-2:]
+        img_h, img_w = img_shape
+
+        def get_valid_index(out, iou_thres):
+
+            out_scores = torch.nn.functional.softmax(out['pred_logits'], -1)[..., 1]
+            v_index = (out_scores > thrs).cpu()
+
+            out_scores = out_scores[v_index]
+            out['pred_logits'] = out['pred_logits'][v_index]
+            out['pred_offsets'] = out['pred_offsets'][v_index]
+            out['pred_points'] = out['pred_points'][v_index]
+            pred_sparse_points = out['pred_points'].clone()
+
+            pred_sparse_points[:, 0] *= img_h
+            pred_sparse_points[:, 1] *= img_w
+
+
+            # 获取深度
+            h_coords = torch.clamp(pred_sparse_points[:, 0].long(), min=0, max=img_h - 1)
+            w_coords = torch.clamp(pred_sparse_points[:, 1].long(), min=0, max=img_w - 1)
+            points_depth = depth_map[:, h_coords, w_coords].squeeze(0)
+
+            boxes = [get_box_from_depth(p, d) for p, d in zip(pred_sparse_points, points_depth)]
+
+
+            if len(boxes) == 0:
+                return torch.zeros(len(out_scores)).bool()
+
+            valid_index = nms_on_boxes(boxes, out_scores, iou_thres)
+            valid_index = valid_index.cpu()
+            return valid_index
+
+
         # process sparse point queries
+        iou_thres = 0.1
         if outputs['sparse'] is not None:
-            out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            valid_sparse = out_sparse_scores > thrs
-            index_sparse = valid_sparse.cpu()
+            index_sparse = get_valid_index(out_sparse, iou_thres)
         else:
             index_sparse = None
 
         # process dense point queries
         if outputs['dense'] is not None:
-            out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            valid_dense = out_dense_scores > thrs
-            index_dense = valid_dense.cpu()
+            index_dense = get_valid_index(out_dense, iou_thres)
         else:
             index_dense = None
 
@@ -147,7 +181,8 @@ class PET(nn.Module):
         div_out['gt_split_map'] = gt_split_map
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        if outputs['seg_map'] is not None:
+            div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -167,7 +202,7 @@ class PET(nn.Module):
         context_info = (encode_src, src_pos_embed, mask)
         
         # apply seg head
-        seg_map = self.seg_head(encode_src)
+        seg_map = None # self.seg_head(encode_src)
         
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
@@ -251,11 +286,12 @@ class PET(nn.Module):
         
         # seg head loss
         seg_map = outputs['seg_map']
-        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map
+        if seg_map is not None:
+            gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+            gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+            loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+            losses += loss_seg_map * 0.1
+            loss_dict['loss_seg_map'] = loss_seg_map
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']

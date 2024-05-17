@@ -134,6 +134,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        # break
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -162,26 +163,27 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
         outputs_points = outputs['pred_points'][0]
         outputs_offsets = outputs['pred_offsets'][0]
-        
+
         # process predicted points
         predict_cnt = len(outputs_scores)
         gt_cnt = targets[0]['points'].shape[0]
 
         # compute error
         mae = abs(predict_cnt - gt_cnt)
+        mae_sign = predict_cnt - gt_cnt
         mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
 
         # record results
         results = {}
         toTensor = lambda x: torch.tensor(x).float().cuda()
         results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
-        metric_logger.update(mae=results['mae'], mse=results['mse'])
+        metric_logger.update(mae=results['mae'], mse=results['mse'], mae_sign=mae_sign)
 
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
 
         # visualize predictions
-        if vis_dir: 
+        if vis_dir:
             points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
             gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
             gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
@@ -190,7 +192,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
             visualization(samples, targets, [points], vis_dir,
                           gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
                           pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
-    
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
