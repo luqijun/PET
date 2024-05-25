@@ -147,7 +147,7 @@ class SHA(Dataset):
         for point, d_p in zip(points, depth.squeeze(0)):
             point = point.round() - 1
             y, x = point
-            head_size = 10 * d_p * scale
+            head_size = 5 * d_p * scale
             head_size = max(head_size, 1)
             y1 = torch.clamp(y - head_size // 2, max=H, min=0).long()
             y2 = torch.clamp(y + head_size // 2, max=H, min=0).long()

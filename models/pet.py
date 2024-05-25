@@ -150,7 +150,7 @@ class PET(nn.Module):
 
 
         # process sparse point queries
-        iou_thres = 0.1
+        iou_thres = 0.05
         if outputs['sparse'] is not None:
             index_sparse = get_valid_index(out_sparse, iou_thres)
         else:

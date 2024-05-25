@@ -4,7 +4,7 @@ from torchvision.ops import nms
 def get_box_from_depth(point, depth):
     # 这里只是一个示例，你需要根据实际情况来计算box
     # 假设box是一个以点为中心，深度值为半径的圆形区域
-    box_size = depth * 10  # 根据实际情况调整box的大小
+    box_size = depth * 5  # 根据实际情况调整box的大小
     box = [
         point[1] - box_size / 2,
         point[0] - box_size / 2,
