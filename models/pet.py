@@ -44,7 +44,8 @@ class PET(nn.Module):
         self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
         
         # segmentation
-        self.seg_head = Segmentation_Head(args.hidden_dim, 1)
+        self.seg_head_sparse = Segmentation_Head(args.hidden_dim, 1)
+        self.seg_head_dense = Segmentation_Head(args.hidden_dim, 1)
 
         # quadtree splitter
         context_patch = (128, 64)
@@ -147,7 +148,8 @@ class PET(nn.Module):
         div_out['gt_split_map'] = gt_split_map
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map_sparse'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1) \
+                                        if outputs['seg_map_sparse'] is not None else None
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -167,7 +169,7 @@ class PET(nn.Module):
         context_info = (encode_src, src_pos_embed, mask)
         
         # apply seg head
-        seg_map = self.seg_head(encode_src)
+        # seg_map = self.seg_head(encode_src)
         
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
@@ -184,6 +186,7 @@ class PET(nn.Module):
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+
         else:
             outputs_sparse = None
         
@@ -196,7 +199,17 @@ class PET(nn.Module):
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
         else:
             outputs_dense = None
-        
+
+        # 获取分割图
+        def get_seg_map(out, seg_head):
+            query_shape = out['query_shape']
+            hs = out['hs'][-1].permute(0, 2, 1).reshape(query_shape)
+            seg_map = seg_head(hs)
+            return seg_map
+
+        seg_map_sparse = get_seg_map(outputs_sparse, self.seg_head_sparse) if 'train' in kwargs else None
+        seg_map_dense = get_seg_map(outputs_dense, self.seg_head_dense) if 'train' in kwargs else None
+
         # format outputs
         outputs = dict(seg_map=None)
         outputs['sparse'] = outputs_sparse
@@ -204,7 +217,8 @@ class PET(nn.Module):
         outputs['split_map_raw'] = split_map
         outputs['split_map_sparse'] = split_map_sparse
         outputs['split_map_dense'] = split_map_dense
-        outputs['seg_map'] = seg_map
+        outputs['seg_map_sparse'] = seg_map_sparse
+        outputs['seg_map_dense'] = seg_map_dense
         return outputs
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
@@ -250,12 +264,17 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_dense)
         
         # seg head loss
-        seg_map = outputs['seg_map']
+        def compute_seg_map_loss(key, gt_seg_map):
+            seg_map = outputs[key]
+            gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+            loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+            loss_dict[f'loss_{key}'] = loss_seg_map
+            return loss_seg_map * 0.1
+
         gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map
+        sparse_seg_map_loss = compute_seg_map_loss('seg_map_sparse', gt_seg_map)
+        dense_seg_map_loss = compute_seg_map_loss('seg_map_dense', gt_seg_map)
+        losses += sparse_seg_map_loss + dense_seg_map_loss
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']
