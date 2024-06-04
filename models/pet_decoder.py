@@ -37,6 +37,9 @@ class PETDecoder(nn.Module):
         # prediction
         points_queries = pqs[1]
         outputs = self.predict(samples, points_queries, hs, **kwargs)
+
+        query_shape = pqs[2].shape[-2:]
+        outputs['query_shape'] = query_shape
         return outputs
 
     def get_point_query(self, samples, features, **kwargs):

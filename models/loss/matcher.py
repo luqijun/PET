@@ -43,6 +43,15 @@ class HungarianMatcher(nn.Module):
                 len(index_i) = len(index_j) = min(num_queries, num_target_points)
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
+        img_h, img_w = outputs['img_shape']
+
+        # generate grid points
+        # q_h, q_w = outputs['query_shape']
+        # x = torch.arange(q_w)
+        # y = torch.arange(q_w)
+        # grid_x, grid_y = torch.meshgrid(x, y, indexing='ij')
+        # grid_points = torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0).float()
+        # grid_points = torch.repeat_interleave(grid_points, repeats=bs, dim=0).flatten(0, 1)
 
         # flatten to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
@@ -51,19 +60,31 @@ class HungarianMatcher(nn.Module):
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets])
+
+        # repeat n times
+        repeat_times = 3
+        # tgt_ids = torch.repeat_interleave(tgt_ids, repeat_times, dim=0)
+        # tgt_points = torch.repeat_interleave(tgt_points, repeat_times, dim=0)
+        point_queries = outputs['points_queries'].clone().unsqueeze(0)
+        grid_points = torch.repeat_interleave(point_queries, bs, dim=0).flatten(0, 1)
+        grid_points_abs = grid_points.clone()
+        grid_points_abs[:, 0] *= img_h
+        grid_points_abs[:, 1] *= img_w
+
         depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1)
+        # depth_weights = torch.repeat_interleave(depth_weights, repeat_times, dim=1)
 
         # compute the classification cost, i.e., - prob[target class]
         cost_class = -out_prob[:, tgt_ids]
 
         # compute the L2 cost between points
-        img_h, img_w = outputs['img_shape']
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
-        cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+        cost_point = 0.9 * torch.cdist(out_points_abs, tgt_points, p=2) + 0.1 * torch.cdist(grid_points_abs, tgt_points, p=2)
 
         # final cost matrix
+
         C = cost_point * depth_weights + self.cost_class * cost_class
         # C = cost_point * self.cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()

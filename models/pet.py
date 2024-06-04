@@ -250,12 +250,12 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_dense)
         
         # seg head loss
-        seg_map = outputs['seg_map']
-        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-        losses += loss_seg_map * 0.1
-        loss_dict['loss_seg_map'] = loss_seg_map
+        # seg_map = outputs['seg_map']
+        # gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+        # gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
+        # loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+        # losses += loss_seg_map * 0.1
+        # loss_dict['loss_seg_map'] = loss_seg_map
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']
