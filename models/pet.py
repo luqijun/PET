@@ -148,8 +148,8 @@ class PET(nn.Module):
         div_out['gt_split_map'] = gt_split_map
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map_sparse'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1) \
-                                        if outputs['seg_map_sparse'] is not None else None
+        # div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map_sparse'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1) \
+        #                                 if outputs['seg_map_sparse'] is not None else None
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -178,27 +178,6 @@ class PET(nn.Module):
         split_map = self.quadtree_splitter(encode_src)        
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
-        
-        # quadtree layer0 forward (sparse)
-        if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
-            # level embeding
-            # kwargs['level_embed'] = self.level_embed[0]
-            kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            kwargs['dec_win_size'] = [16, 8]
-            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
-
-        else:
-            outputs_sparse = None
-        
-        # quadtree layer1 forward (dense)
-        if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
-            # level embeding
-            # kwargs['level_embed'] = self.level_embed[1]
-            kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            kwargs['dec_win_size'] = [8, 4]
-            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
-        else:
-            outputs_dense = None
 
         # 获取分割图
         def get_seg_map(out, seg_head):
@@ -207,8 +186,32 @@ class PET(nn.Module):
             seg_map = seg_head(hs)
             return seg_map
 
-        seg_map_sparse = get_seg_map(outputs_sparse, self.seg_head_sparse) if 'train' in kwargs else None
-        seg_map_dense = get_seg_map(outputs_dense, self.seg_head_dense) if 'train' in kwargs else None
+        # quadtree layer0 forward (sparse)
+        if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
+            # level embeding
+            # kwargs['level_embed'] = self.level_embed[0]
+            kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
+            kwargs['dec_win_size'] = [16, 8]
+            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+
+            seg_map_sparse = get_seg_map(outputs_sparse, self.seg_head_sparse) if 'train' in kwargs else None
+            outputs_sparse['seg_head_map'] = seg_map_sparse
+
+        else:
+            outputs_sparse = None
+
+        # quadtree layer1 forward (dense)
+        if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
+            # level embeding
+            # kwargs['level_embed'] = self.level_embed[1]
+            kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
+            kwargs['dec_win_size'] = [8, 4]
+            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+
+            seg_map_dense = get_seg_map(outputs_dense, self.seg_head_dense) if 'train' in kwargs else None
+            outputs_dense['seg_head_map'] = seg_map_dense
+        else:
+            outputs_dense = None
 
         # format outputs
         outputs = dict(seg_map=None)
@@ -217,8 +220,6 @@ class PET(nn.Module):
         outputs['split_map_raw'] = split_map
         outputs['split_map_sparse'] = split_map_sparse
         outputs['split_map_dense'] = split_map_dense
-        outputs['seg_map_sparse'] = seg_map_sparse
-        outputs['seg_map_dense'] = seg_map_dense
         return outputs
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
@@ -262,19 +263,6 @@ class PET(nn.Module):
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
-        
-        # seg head loss
-        def compute_seg_map_loss(key, gt_seg_map):
-            seg_map = outputs[key]
-            gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-            loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
-            loss_dict[f'loss_{key}'] = loss_seg_map
-            return loss_seg_map * 0.1
-
-        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        sparse_seg_map_loss = compute_seg_map_loss('seg_map_sparse', gt_seg_map)
-        dense_seg_map_loss = compute_seg_map_loss('seg_map_dense', gt_seg_map)
-        losses += sparse_seg_map_loss + dense_seg_map_loss
 
         # splitter depth loss
         pred_depth_levels = outputs['split_map_raw']

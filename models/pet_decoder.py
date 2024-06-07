@@ -24,6 +24,16 @@ class PETDecoder(nn.Module):
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
 
+    #     self.init_params()
+    #
+    # def init_params(self):
+    #     nn.init.constant_(self.class_embed.weight, 1.0)
+    #     nn.init.constant_(self.class_embed.bias, 0.0)
+    #
+    #     for layer in self.coord_embed.layers:
+    #         nn.init.constant_(layer.weight, 1.0)
+    #         nn.init.constant_(layer.bias, 0.0)
+
     def forward(self, samples, features, context_info, **kwargs):
         encode_src, src_pos_embed, mask = context_info
 

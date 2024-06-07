@@ -36,6 +36,46 @@ class SetCriterion(nn.Module):
         self.register_buffer('empty_weight', empty_weight)
         self.div_thrs_dict = {8: 0.0, 4: 0.5}
 
+    def loss_seg_heads(self, outputs, targets, indices, num_points, log=True, **kwargs):
+        assert 'seg_head_map' in outputs
+        src_seg_map = outputs['seg_head_map']
+        idx = self._get_src_permutation_idx(indices)
+        gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
+        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=src_seg_map.shape[-2:])
+        raw_ce_seg_head_loss = F.binary_cross_entropy_with_logits(src_seg_map, gt_seg_map, reduction='none')
+
+        if 'div' in kwargs:
+            # get sparse / dense image index
+            den = torch.tensor([target['density'] for target in targets])
+            den_sort = torch.sort(den)[1]
+            ds_idx = den_sort[:len(den_sort) // 2]
+            sp_idx = den_sort[len(den_sort) // 2:]
+            eps = 1e-5
+
+            # binarize split map
+            query_shape = outputs['query_shape'][-2:]
+            split_map = kwargs['div']
+            split_map = split_map.reshape(split_map.shape[0], query_shape[0], query_shape[1])
+            split_map = F.interpolate(split_map.unsqueeze(1), size=src_seg_map.shape[-2:])
+            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
+            div_mask = split_map > div_thrs
+
+            # dual supervision for sparse/dense images
+            # raw_ce_seg_head_loss = raw_ce_seg_head_loss.flatten(1)
+            loss_ce_sp = (raw_ce_seg_head_loss *  div_mask)[sp_idx].sum() / (div_mask[sp_idx].sum() + eps)
+            loss_ce_ds = (raw_ce_seg_head_loss *  div_mask)[ds_idx].sum() / (div_mask[ds_idx].sum() + eps)
+            loss_ce_seg_head = loss_ce_sp + loss_ce_ds
+
+            # loss on non-div regions
+            non_div_mask = split_map <= div_thrs
+            loss_ce_nondiv = (raw_ce_seg_head_loss * non_div_mask).sum() / (non_div_mask.sum() + eps)
+            loss_ce_seg_head = loss_ce_seg_head + loss_ce_nondiv
+        else:
+            loss_ce_seg_head = raw_ce_seg_head_loss.mean()
+
+        losses = {'loss_ce_seg_head': loss_ce_seg_head}
+        return losses
+
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
         Classification loss:
@@ -153,6 +193,7 @@ class SetCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'points': self.loss_points,
+            'segheads': self.loss_seg_heads
         }
         assert loss in loss_map, f'{loss} loss is not defined'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
