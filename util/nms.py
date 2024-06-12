@@ -1,10 +1,27 @@
 import torch
 from torchvision.ops import nms
 
-def get_box_from_depth(point, depth):
+def get_boxes_from_depths(points, depths, base_size=60, scale=1.0, min_size=8.0, img_h=None, img_w=None):
+    box_sizes = base_size * scale * depths
+    box_sizes = torch.clamp(box_sizes, min=min_size)
+    lt_points = points - box_sizes.unsqueeze(-1)
+    rb_points = points + box_sizes.unsqueeze(-1)
+    anchor_bboxes = torch.cat([lt_points, rb_points], dim=-1) # (y1, x1, y2, x2)
+
+    if img_h is not None:
+        anchor_bboxes[:, 0] = torch.clamp(anchor_bboxes[:, 0], max=img_h, min=0)
+        anchor_bboxes[:, 2] = torch.clamp(anchor_bboxes[:, 2], max=img_h, min=0)
+    if img_w is not None:
+        anchor_bboxes[:, 1] = torch.clamp(anchor_bboxes[:, 1], max=img_w, min=0)
+        anchor_bboxes[:, 3] = torch.clamp(anchor_bboxes[:, 3], max=img_w, min=0)
+
+    return anchor_bboxes
+
+
+def get_box_from_depth(point, depth, base_size=60, scale=1.0, min_size=8):
     # 这里只是一个示例，你需要根据实际情况来计算box
     # 假设box是一个以点为中心，深度值为半径的圆形区域
-    box_size = depth * 5  # 根据实际情况调整box的大小
+    box_size = max(base_size * scale * depth, min_size)  # 根据实际情况调整box的大小
     box = [
         point[1] - box_size / 2,
         point[0] - box_size / 2,

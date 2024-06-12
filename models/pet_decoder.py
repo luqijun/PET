@@ -7,6 +7,7 @@ from torch import nn
 
 from .layers import *
 from .transformer import *
+from util.nms import get_boxes_from_depths
 
 class PETDecoder(nn.Module):
     """ 
@@ -20,6 +21,7 @@ class PETDecoder(nn.Module):
 
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.depth_embed = MLP(hidden_dim, hidden_dim, 1, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
@@ -37,6 +39,7 @@ class PETDecoder(nn.Module):
         # prediction
         points_queries = pqs[1]
         outputs = self.predict(samples, points_queries, hs, **kwargs)
+        outputs['query_shape'] = pqs[2].shape[-2:]
         return outputs
 
     def get_point_query(self, samples, features, **kwargs):
@@ -169,14 +172,33 @@ class PETDecoder(nn.Module):
         """
         Crowd prediction
         """
+
+        img_shape = samples.tensors.shape[-2:]
+        img_h, img_w = img_shape
+
         outputs_class = self.class_embed(hs)
         # normalize to 0~1
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
+        # outputs_depths = self.depth_embed(hs).sigmoid()[-1]
+
+        # generate bounding boxes
+        bs = samples.tensors.shape[0]
+        center_points = points_queries.to(outputs_class.device)
+        center_points = torch.repeat_interleave(center_points.unsqueeze(0), repeats=bs, dim=0) # (bs, num_queries, 2)
+
+        base_size = 60
+        scales = torch.tensor([tgt['scale'] for tgt in kwargs['targets']], device=outputs_class.device) # (bs,)
+        depth_values = []
+        depth_maps = torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0)
+        for c_points, d_map in zip(center_points, depth_maps):
+            d_value = d_map[c_points[:, 0], c_points[:, 1]]
+            depth_values.append(d_value)
+        depth_values = torch.stack(depth_values, dim=0).to(center_points.device) # (bs, num_priors)
+
+        anchor_bboxes = get_boxes_from_depths(center_points, depth_values, scale=scales.unsqueeze(-1), img_h=img_h, img_w=img_w) # (bs, num_priors, 4)
 
         # normalize point-query coordinates
-        img_shape = samples.tensors.shape[-2:]
-        img_h, img_w = img_shape
-        points_queries = points_queries.float().cuda()
+        points_queries = points_queries.float().to(outputs_class.device)
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
@@ -186,7 +208,15 @@ class PETDecoder(nn.Module):
             outputs_offsets[...,1] /= (img_w / 256)
 
         outputs_points = outputs_offsets[-1] + points_queries
-        out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets[-1]}
+        out = {
+            'pred_logits': outputs_class[-1],
+            'pred_points': outputs_points,
+            'img_shape': img_shape,
+            'pred_offsets': outputs_offsets[-1],
+            # 'pred_depth':outputs_depths,
+            'anchor_bboxes':anchor_bboxes,
+            'anchor_points': center_points,
+        }
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride

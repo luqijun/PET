@@ -9,6 +9,7 @@ import glob
 import scipy.io as io
 import torchvision.transforms as standard_transforms
 from util.misc import save_tensor_to_image
+from util.nms import get_boxes_from_depths
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -105,8 +106,12 @@ class SHA(Dataset):
         depth = img_depth[:, h_coords, w_coords]
         target['depth'] = img_depth
         target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
-        target['seg_map'] = self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
+
+        seg_map, gt_bboxes = self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
+        target['seg_map'] = seg_map
+        target['gt_bboxes'] = gt_bboxes
         target['label_map'] = self.get_label_map(points, img_depth.shape[-2:])
+        target['scale'] = torch.tensor(scale)
 
         # save
         # save_tensor_to_image(target['seg_map'], '/mnt/c/Users/lqjun/Desktop/test.png')
@@ -144,17 +149,10 @@ class SHA(Dataset):
 
         H, W = shape
         result = torch.zeros(shape)
-        for point, d_p in zip(points, depth.squeeze(0)):
-            point = point.round() - 1
-            y, x = point
-            head_size = 5 * d_p * scale
-            head_size = max(head_size, 1)
-            y1 = torch.clamp(y - head_size // 2, max=H, min=0).long()
-            y2 = torch.clamp(y + head_size // 2, max=H, min=0).long()
-            x1 = torch.clamp(x - head_size // 2, max=W, min=0).long()
-            x2 = torch.clamp(x + head_size // 2, max=W, min=0).long()
+        gt_bboxes = get_boxes_from_depths(points, depth.squeeze(0), scale=scale, img_h=H, img_w=W).long()
+        for y1, x1, y2, x2 in gt_bboxes:
             result[y1:y2, x1:x2] = 1
-        return result
+        return result, gt_bboxes
 
     def get_label_map(self, points, shape):
         H, W = shape

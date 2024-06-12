@@ -4,10 +4,8 @@ PET model and criterion classes
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.init import normal_
 
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       get_world_size, is_dist_avail_and_initialized)
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list)
 
 from .loss import build_criterion
 from .pet_decoder import PETDecoder
@@ -15,8 +13,7 @@ from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
 from .utils import pos2posemb1d
-from .layers import Segmentation_Head
-from .nms import get_box_from_depth, nms_on_boxes
+from util.nms import get_boxes_from_depths, nms_on_boxes
     
 
 class PET(nn.Module):
@@ -132,15 +129,13 @@ class PET(nn.Module):
             pred_sparse_points[:, 0] *= img_h
             pred_sparse_points[:, 1] *= img_w
 
-
             # 获取深度
             h_coords = torch.clamp(pred_sparse_points[:, 0].long(), min=0, max=img_h - 1)
             w_coords = torch.clamp(pred_sparse_points[:, 1].long(), min=0, max=img_w - 1)
             points_depth = depth_map[:, h_coords, w_coords].squeeze(0)
 
-            boxes = [get_box_from_depth(p, d) for p, d in zip(pred_sparse_points, points_depth)]
-
-
+            # boxes = [get_box_from_depth(p, d) for p, d in zip(pred_sparse_points, points_depth)]
+            boxes = get_boxes_from_depths(pred_sparse_points, points_depth, img_h=img_h, img_w=img_w)
             if len(boxes) == 0:
                 return torch.zeros(len(out_scores)).bool()
 
@@ -150,7 +145,7 @@ class PET(nn.Module):
 
 
         # process sparse point queries
-        iou_thres = 0.05
+        iou_thres = 0.5
         if outputs['sparse'] is not None:
             index_sparse = get_valid_index(out_sparse, iou_thres)
         else:
@@ -183,6 +178,8 @@ class PET(nn.Module):
         div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
         if outputs['seg_map'] is not None:
             div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        else:
+            div_out['pred_seg_head_map'] = torch.zeros_like(div_out['gt_seg_head_map'])
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):

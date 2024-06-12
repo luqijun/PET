@@ -89,6 +89,7 @@ def main(args):
     utils.init_distributed_mode(args)
     print(args)
     device = torch.device(args.device)
+    # device = torch.device('cpu')
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
@@ -103,7 +104,7 @@ def main(args):
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model_without_ddp = model
-    if args.distributed:
+    if args.distributed and device.type != 'cpu':
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

@@ -43,52 +43,13 @@ class SetCriterion(nn.Module):
         """
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
-        target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
-        target_classes[idx] = target_classes_o
+        target_classes = torch.stack([idx[0] for idx in indices], dim=0)
 
-        # 查找落在分割图中的点
-        # seg_maps = torch.stack([t['seg_map'].round().long() for t in targets], dim=0)
-        # seg_maps = F.interpolate(seg_maps.unsqueeze(1).float(), size=[32, 32], mode='nearest')
-        # target_classes_from_seg = seg_maps.flatten(1).long()
-
-        img_shape = outputs['img_shape']
-        img_h, img_w = img_shape
-
-        # pred_points_single = outputs['pred_points'].clone()
-        # pred_points_single[:, 0] *= img_h
-        # pred_points_single[:, 1] *= img_w
-        # pred_points_single = pred_points_single.long()
         #
-        # points_clipped = torch.clamp(pred_points_single, min=0, max=255)
-        # seg_map = torch.stack([t['seg_map'] for t in targets])
-        #
-        # points_clipped = points_clipped.unsqueeze(2)
-        # selected_values = torch.gather(seg_map.unsqueeze(1), 2, points_clipped)
-
-        bs = src_logits.shape[0]
-        labels = []
-        for b_idx in range(bs):
-            pred_points_single = outputs['pred_points'][b_idx].clone()
-            pred_points_single[:, 0] *= img_h
-            pred_points_single[:, 1] *= img_w
-            pred_points_single = pred_points_single.long()
-
-            points_clipped = torch.clamp(pred_points_single, min=0, max=255)
-            seg_map =  targets[b_idx]['seg_map']
-            points_in_mask  = seg_map[points_clipped[:, 0], points_clipped[:, 1]]
-            points_in_bounds = (points_clipped == pred_points_single).all(dim=1)
-            filter_mask = points_in_mask.bool() & points_in_bounds
-
-            label = torch.zeros(pred_points_single.shape[0], device=pred_points_single.device)
-            label[filter_mask] = 1
-
-            labels.append(label)
-
-        # 合并
-        labels = torch.stack(labels, dim=0).long()
-        target_classes = target_classes | labels
+        # idx = self._get_src_permutation_idx(indices)
+        # target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        # target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
+        # target_classes[idx] = target_classes_o
 
         # compute classification loss
         if 'div' in kwargs:
@@ -131,10 +92,18 @@ class SetCriterion(nn.Module):
            - targets dicts must contain the key "points" containing a tensor of dim [nb_target_points, 2]
         """
         assert 'pred_points' in outputs
+
+        target_points = torch.cat([idx[1] for idx in indices])
+        src_points  = torch.cat([idx[2] for idx in indices])
+
+        batch_idx = torch.cat([torch.full_like(src[3], i) for i, src in enumerate(indices)]).long()
+        src_idx = torch.cat([idx[3] for idx in indices]).long()
+        idx = batch_idx, src_idx
+
         # get indices
-        idx = self._get_src_permutation_idx(indices)
-        src_points = outputs['pred_points'][idx]
-        target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        # idx = self._get_src_permutation_idx(indices)
+        # src_points = outputs['pred_points'][idx]
+        # target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         # compute regression loss
         losses = {}
@@ -143,11 +112,6 @@ class SetCriterion(nn.Module):
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
         loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
-
-        # 使用深度权重
-        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
-        # depth_weights = depth_weights[:len(loss_points_raw)]
-        # loss_points_raw *= depth_weights
 
         if 'div' in kwargs:
             # get sparse / dense index
@@ -175,7 +139,7 @@ class SetCriterion(nn.Module):
             # final point loss
             losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
         else:
-            losses['loss_points'] = loss_points_raw.sum() / num_points
+            losses['loss_points'] = loss_points_raw.sum() / len(loss_points_raw)
 
         return losses
 
@@ -207,12 +171,13 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         # retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs, targets)
+        # indices = self.matcher(outputs, targets)
+        indices = self.assign(outputs, targets)
 
         # compute the average number of target points accross all nodes, for normalization purposes
         num_points = sum(len(t["labels"]) for t in targets)
         num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
+        if is_dist_avail_and_initialized() and num_points.device.type != 'cpu':
             torch.distributed.all_reduce(num_points)
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()
 
@@ -221,3 +186,127 @@ class SetCriterion(nn.Module):
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets, indices, num_points, **kwargs))
         return losses
+
+
+    def assign(self, outputs, targets):
+
+        query_shape = outputs['query_shape']
+        anchor_points = outputs['anchor_points']
+        anchor_bboxes = outputs['anchor_bboxes']
+
+        pred_points = outputs['pred_points']
+
+        result = []
+        for single_anchor_bboxes, single_anchor_points, single_pred_points, tgt in \
+                zip(anchor_bboxes, anchor_points, pred_points, targets):
+            single_gt_bboxes = tgt['gt_bboxes'] # (n, 4) ( y1, x1, y2, x2)
+            single_gt_points = tgt['points'] # (n, 2) (y, x)
+            single_gt_labels = tgt['labels'] # (n , 1)
+
+            num_gt, num_priors = single_gt_points.size(0), single_anchor_bboxes.size(0)
+            if num_gt == 0:
+                assigned_labels = single_pred_points.new_full((num_priors,), 0 , dtype=torch.long)
+                assigned_target_points = torch.empty((0, 2), device=single_pred_points.device)
+                assigned_src_points = torch.empty((0, 2), device=single_pred_points.device)
+                pos_inds = torch.empty((0,), device=single_pred_points.device)
+                result.append((assigned_labels, assigned_target_points, assigned_src_points, pos_inds))
+                continue
+
+            overlaps = self.box_iou(single_anchor_bboxes, single_gt_bboxes)
+            distances = torch.cdist(single_anchor_points.float(), single_gt_points, p=2)
+
+            assert len(distances) > 0
+
+            topk = 12
+            selectable_k = min(topk, len(distances))
+            _, candidate_idxs = distances.topk(selectable_k, dim=0, largest=False) # (topk, num_gt) 值代表行索引
+
+            candidate_overlaps = overlaps[candidate_idxs, torch.arange(num_gt)] # (topk, num_gt)
+
+            overlaps_mean_per_gt = candidate_overlaps.mean(0)
+            overlaps_std_per_gt = candidate_overlaps.std(0)
+            overlaps_thr_per_gt = overlaps_mean_per_gt + overlaps_std_per_gt
+
+            is_pos = candidate_overlaps >= overlaps_thr_per_gt[None, :] # (topk, num_gt)
+
+            for gt_idx in range(num_gt):
+                candidate_idxs[:, gt_idx] += gt_idx * num_priors
+
+            priors_cx = single_anchor_points[:, 0]
+            priors_cy = single_anchor_points[:, 1]
+            ep_priors_cx = priors_cx.view(1, -1).expand(
+                num_gt, num_priors).contiguous().view(-1) # (num_gt * num_priors)
+            ep_priors_cy = priors_cy.view(1, -1).expand(
+                num_gt, num_priors).contiguous().view(-1) # (num_gt * num_priors)
+            candidate_idxs = candidate_idxs.view(-1) # (topk * num_gt)
+
+            # calculate the left, top, right, bottom distance between positive
+            # prior center and gt side
+            l_ = ep_priors_cx[candidate_idxs].view(-1, num_gt) - single_gt_bboxes[:, 0]
+            t_ = ep_priors_cy[candidate_idxs].view(-1, num_gt) - single_gt_bboxes[:, 1]
+            r_ = single_gt_bboxes[:, 2] - ep_priors_cx[candidate_idxs].view(-1, num_gt)
+            b_ = single_gt_bboxes[:, 3] - ep_priors_cy[candidate_idxs].view(-1, num_gt)
+            is_in_gts = torch.stack([l_, t_, r_, b_], dim=1).min(dim=1)[0] > 0.01
+
+            is_pos = is_pos & is_in_gts
+
+            # if an anchor box is assigned to multiple gts,
+            # the one with the highest IoU will be selected.
+            INF = 100000000
+            overlaps_inf = torch.full_like(overlaps, -INF).t().contiguous().view(-1) # （num_gt * num_priors）
+            index = candidate_idxs.view(-1)[is_pos.view(-1)] # 选择符合条件的候选点索引
+            overlaps_inf[index] = overlaps.t().contiguous().view(-1)[index] # 将overlaps值赋值给overlaps_inf
+            overlaps_inf = overlaps_inf.view(num_gt, -1).t() # (num_priors, num_gt)
+
+            max_overlaps, argmax_overlaps = overlaps_inf.max(dim=1) # (num_priors,)
+            assigned_gt_inds = overlaps.new_full((num_priors,), 0, dtype=torch.long)
+            assigned_gt_inds[max_overlaps != -INF] = argmax_overlaps[max_overlaps != -INF] + 1 # 代表每个预测点对应的gt的index
+
+            # assigned_target_points = torch.zeros_like(single_anchor_points).float()
+            # assigned_pred_points = torch.zeros_like(single_anchor_points).float()
+            assigned_labels = assigned_gt_inds.new_full((num_priors,), 0)
+            pos_inds = torch.nonzero(assigned_gt_inds > 0, as_tuple=False).squeeze()
+
+            if pos_inds.numel() > 0:
+                assigned_labels[pos_inds] = single_gt_labels[assigned_gt_inds[pos_inds] - 1]
+                assigned_target_points = single_gt_points[assigned_gt_inds[pos_inds] - 1, :]
+                assigned_src_points = single_pred_points[max_overlaps != -INF]  # 选择预测的点
+                # assigned_target_points[pos_inds, :] = single_gt_points[assigned_gt_inds[pos_inds] - 1, :]
+            else:
+                assigned_target_points = torch.empty((0, 2), device=single_pred_points.device)
+                assigned_src_points = torch.empty((0, 2), device=single_pred_points.device)
+
+            if assigned_target_points.ndim == 1:
+                assigned_target_points = assigned_target_points.unsqueeze(0)
+                # assigned_src_points = assigned_src_points.unsqueeze(0)
+                pos_inds = pos_inds.unsqueeze(0)
+
+            result.append((assigned_labels, assigned_target_points, assigned_src_points, pos_inds))
+
+        return result
+
+
+    def box_iou(self, boxes1, boxes2):
+        """
+        Compute the intersection over union of two set of boxes.
+
+        Args:
+            boxes1 (Tensor[N, 4]): First set of boxes.
+            boxes2 (Tensor[M, 4]): Second set of boxes.
+
+        Returns:
+            iou (Tensor[N, M]): Pairwise IoU between boxes from boxes1 and boxes2.
+        """
+        area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
+        area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+
+        lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # [N,M,2]
+        rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # [N,M,2]
+
+        wh = (rb - lt).clamp(min=0)  # [N,M,2]
+        inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
+
+        union = area1[:, None] + area2 - inter
+
+        iou = inter / union
+        return iou
