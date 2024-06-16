@@ -160,41 +160,51 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # inference
         outputs = model(samples, test=True, targets=targets)
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
-        outputs_points = outputs['pred_points'][0]
-        outputs_offsets = outputs['pred_offsets'][0]
+        iou_thres = outputs['iou_thres']
+        for i, per_iou_tr_sparse in enumerate(iou_thres):
+            for j, per_iou_tr_dense in enumerate(iou_thres):
+                logits_key = f'pred_logits_{per_iou_tr_sparse}_{per_iou_tr_dense}'
+                points_key = f'pred_points_{per_iou_tr_sparse}_{per_iou_tr_dense}'
 
-        # process predicted points
-        predict_cnt = len(outputs_scores)
-        gt_cnt = targets[0]['points'].shape[0]
+                mae_key = f'mae_{per_iou_tr_sparse}_{per_iou_tr_dense}'
+                mse_key = f'mse_{per_iou_tr_sparse}_{per_iou_tr_dense}'
 
-        # compute error
-        mae = abs(predict_cnt - gt_cnt)
-        mae_sign = predict_cnt - gt_cnt
-        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+                outputs_scores = torch.nn.functional.softmax(outputs[logits_key], -1)[:, :, 1][0]
+                outputs_points = outputs[points_key][0]
+                # outputs_offsets = outputs['pred_offsets'][0]
 
-        # record results
-        results = {}
-        toTensor = lambda x: torch.tensor(x).float().cuda()
-        results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
-        metric_logger.update(mae=results['mae'], mse=results['mse'], mae_sign=mae_sign)
+                # process predicted points
+                predict_cnt = len(outputs_scores)
+                gt_cnt = targets[0]['points'].shape[0]
 
-        results_reduced = utils.reduce_dict(results)
-        metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
+                # compute error
+                mae = abs(predict_cnt - gt_cnt)
+                mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
 
-        # visualize predictions
-        if vis_dir:
-            points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
-            gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
-            gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
-            pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
-            pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
-            visualization(samples, targets, [points], vis_dir,
-                          gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
-                          pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
+                # record results
+                results = {}
+                toTensor = lambda x: torch.tensor(x).float().cuda()
+                results[mae_key], results[mse_key] = toTensor(mae), toTensor(mse)
+                metric_logger.update(**results)
+
+                results_reduced = utils.reduce_dict(results)
+                metric_logger.update(**results_reduced)
+
+                # visualize predictions
+                if vis_dir and per_iou_tr_sparse == 0.6 and per_iou_tr_dense==0.6:
+                    points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
+                    gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
+                    gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
+                    pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+                    pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+                    visualization(samples, targets, [points], vis_dir,
+                                  gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
+                                  pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    results['mse'] = np.sqrt(results['mse'])
+    for k, v in results.items():
+        if 'mse_' in k:
+            results[k] = np.sqrt(v)
     return results

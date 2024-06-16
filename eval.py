@@ -115,7 +115,17 @@ def main(args):
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
     test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir)
-    mae, mse = test_stats['mae'], test_stats['mse']
+
+    maes = {ts_k: ts_v for ts_k, ts_v in test_stats.items() if 'mae_' in ts_k}
+    mses = {ts_k: ts_v for ts_k, ts_v in test_stats.items() if 'mse_' in ts_k}
+
+    min_mae_key = min(maes, key=maes.get)
+    mae = maes[min_mae_key]
+
+    min_mse_key = min(mses, key=mses.get)
+    mse = mses[min_mse_key]
+
+    # mae, mse = test_stats['mae'], test_stats['mse']
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
     print(line)
 

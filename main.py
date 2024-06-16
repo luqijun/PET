@@ -220,8 +220,17 @@ def main(args):
             test_stats = evaluate(model, data_loader_val, device, epoch, None)
             t2 = time.time()
 
+            maes = {ts_k:ts_v for ts_k, ts_v in test_stats.items() if 'mae_' in ts_k }
+            mses = {ts_k:ts_v for ts_k, ts_v in test_stats.items() if 'mse_' in ts_k }
+
+            min_mae_key = min(maes, key=maes.get)
+            mae = maes[min_mae_key]
+
+            min_mse_key = min(mses, key=mses.get)
+            mse = mses[min_mse_key]
+
             # output results
-            mae, mse = test_stats['mae'], test_stats['mse']
+            # mae, mse = test_stats['mae'], test_stats['mse']
             if mae < best_mae:
                 best_epoch = epoch
                 best_mae = mae
@@ -229,13 +238,13 @@ def main(args):
                 best_mse_epoch = epoch
                 best_mse = mse
             print("\n==========================")
-            print("\nepoch:", epoch, "mae:", mae, "mse:", mse,
+            print("\nepoch:", epoch, min_mae_key, mae, min_mse_key, mse,
                   "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "\tbest mse:", best_mse, "best epoch:", best_mse_epoch)
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a") as log_file:
-                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\tbest mse:{}, best epoch: {}".format(
-                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
+                    log_str = "\nepoch:{}, " + min_mae_key + ":{}, "+ min_mse_key + ":{}, time{}, \n\nbest mae:{}, best epoch: {}\tbest mse:{}, best epoch: {}"
+                    log_file.write(log_str.format(epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
                                                 
                 # save best checkpoint
                 src_path = output_dir / 'checkpoint.pth'
@@ -245,6 +254,8 @@ def main(args):
                 if mse == best_mse:
                     dst_path = output_dir / 'best_mse_checkpoint.pth'
                     shutil.copyfile(src_path, dst_path)
+
+
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

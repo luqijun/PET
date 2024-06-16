@@ -135,42 +135,53 @@ class PET(nn.Module):
             points_depth = depth_map[:, h_coords, w_coords].squeeze(0)
 
             # boxes = [get_box_from_depth(p, d) for p, d in zip(pred_sparse_points, points_depth)]
-            boxes = get_boxes_from_depths(pred_sparse_points, points_depth, img_h=img_h, img_w=img_w)
-            if len(boxes) == 0:
-                return torch.zeros(len(out_scores)).bool()
+            boxes = get_boxes_from_depths(pred_sparse_points, points_depth, img_h=img_h, img_w=img_w) # (pred_num, 4)
+            valid_index_list = []
+            for per_iou_tr in iou_thres:
+                if len(boxes) == 0:
+                    valid_index_list.append(torch.zeros(len(out_scores)).bool())
+                    continue
+                valid_index = nms_on_boxes(boxes, out_scores, per_iou_tr)
+                valid_index = valid_index.cpu()
+                valid_index_list.append(valid_index)
 
-            valid_index = nms_on_boxes(boxes, out_scores, iou_thres)
-            valid_index = valid_index.cpu()
-            return valid_index
+            return valid_index_list
 
 
         # process sparse point queries
-        iou_thres = 0.5
+        iou_thres = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.9]
         if outputs['sparse'] is not None:
-            index_sparse = get_valid_index(out_sparse, iou_thres)
+            index_sparse_list = get_valid_index(out_sparse, iou_thres)
         else:
-            index_sparse = None
+            index_sparse_list = None
 
         # process dense point queries
         if outputs['dense'] is not None:
-            index_dense = get_valid_index(out_dense, iou_thres)
+            index_dense_list = get_valid_index(out_dense, iou_thres)
         else:
-            index_dense = None
+            index_dense_list = None
 
         # format output
         div_out = dict()
+        div_out['iou_thres'] = iou_thres
         output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
-        for name in list(output_names):
-            if 'pred' in name:
-                if index_dense is None:
-                    div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
-                elif index_sparse is None:
-                    div_out[name] = out_dense[name][index_dense].unsqueeze(0)
-                else:
-                    div_out[name] = torch.cat(
-                        [out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
-            else:
-                div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
+        for i, per_iou_tr_sparse in enumerate(iou_thres):
+            for j, per_iou_tr_dense in enumerate(iou_thres):
+                index_sparse = None if index_sparse_list == None else index_sparse_list[i]
+                index_dense = None if index_dense_list == None else index_dense_list[j]
+
+                # 计算每个iou阈值下的值
+                for name in list(output_names):
+                    store_key = f'{name}_{per_iou_tr_sparse}_{per_iou_tr_dense}'
+                    if 'pred' in name:
+                        if index_dense is None:
+                            div_out[store_key] = out_sparse[name][index_sparse].unsqueeze(0)
+                        elif index_sparse is None:
+                            div_out[store_key] = out_dense[name][index_dense].unsqueeze(0)
+                        else:
+                            div_out[store_key] = torch.cat([out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
+                    else:
+                        div_out[store_key] = out_sparse[name] if out_sparse is not None else out_dense[name]
 
         gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > self.split_depth_th).long()
         div_out['gt_split_map'] = gt_split_map
