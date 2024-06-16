@@ -1,7 +1,7 @@
 import torch
 from torchvision.ops import nms
 
-def get_boxes_from_depths(points, depths, base_size=60, scale=1.0, min_size=8.0, img_h=None, img_w=None):
+def get_boxes_from_depths(points, depths, base_size=20, scale=1.0, min_size=8.0, img_h=None, img_w=None):
     box_sizes = base_size * scale * depths
     box_sizes = torch.clamp(box_sizes, min=min_size)
     lt_points = points - box_sizes.unsqueeze(-1)
@@ -18,17 +18,17 @@ def get_boxes_from_depths(points, depths, base_size=60, scale=1.0, min_size=8.0,
     return anchor_bboxes
 
 
-def get_box_from_depth(point, depth, base_size=60, scale=1.0, min_size=8):
-    # 这里只是一个示例，你需要根据实际情况来计算box
-    # 假设box是一个以点为中心，深度值为半径的圆形区域
-    box_size = max(base_size * scale * depth, min_size)  # 根据实际情况调整box的大小
-    box = [
-        point[1] - box_size / 2,
-        point[0] - box_size / 2,
-        point[1] + box_size / 2,
-        point[0] + box_size / 2,
-    ]
-    return box
+# def get_box_from_depth(point, depth, base_size=60, scale=1.0, min_size=8):
+#     # 这里只是一个示例，你需要根据实际情况来计算box
+#     # 假设box是一个以点为中心，深度值为半径的圆形区域
+#     box_size = max(base_size * scale * depth, min_size)  # 根据实际情况调整box的大小
+#     box = [
+#         point[1] - box_size / 2,
+#         point[0] - box_size / 2,
+#         point[1] + box_size / 2,
+#         point[0] + box_size / 2,
+#     ]
+#     return box
 
 def nms_on_boxes(boxes, scores, iou_threshold):
     # 将boxes转换为tensor
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     depths = torch.tensor([0.5, 0.4, 0.3, 0.2])  # 假设深度值
 
     # 计算每个点的box
-    boxes = [get_box_from_depth(point, depth) for point, depth in zip(pred_points, depths)]
+    boxes = get_boxes_from_depths(pred_points, depths)
 
     # 执行NMS
     iou_threshold = 0.5  # 假设的IOU阈值

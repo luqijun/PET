@@ -217,7 +217,7 @@ class SetCriterion(nn.Module):
 
             assert len(distances) > 0
 
-            topk = 12
+            topk = 16
             selectable_k = min(topk, len(distances))
             _, candidate_idxs = distances.topk(selectable_k, dim=0, largest=False) # (topk, num_gt) 值代表行索引
 

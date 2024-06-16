@@ -195,7 +195,16 @@ class PETDecoder(nn.Module):
             depth_values.append(d_value)
         depth_values = torch.stack(depth_values, dim=0).to(center_points.device) # (bs, num_priors)
 
-        anchor_bboxes = get_boxes_from_depths(center_points, depth_values, scale=scales.unsqueeze(-1), img_h=img_h, img_w=img_w) # (bs, num_priors, 4)
+        # scales0 = scales
+        # scales1 = scales * 1.5
+        # scales2 = scales * 0.5
+        # anchor_bboxes0 = get_boxes_from_depths(center_points, depth_values, scale=scales0.unsqueeze(-1), img_h=img_h, img_w=img_w) # (bs, num_priors, 4)
+        # anchor_bboxes1 = get_boxes_from_depths(center_points, depth_values, scale=scales1.unsqueeze(-1), img_h=img_h, img_w=img_w) # (bs, num_priors, 4)
+        # anchor_bboxes2 = get_boxes_from_depths(center_points, depth_values, scale=scales2.unsqueeze(-1), img_h=img_h, img_w=img_w, min_size=12.0 * 0.5) # (bs, num_priors, 4)
+        # anchor_bboxes = torch.cat([anchor_bboxes0, anchor_bboxes1, anchor_bboxes2], dim=1)
+
+        anchor_bboxes = get_boxes_from_depths(center_points, depth_values, scale=scales.unsqueeze(-1), img_h=img_h, img_w=img_w)
+
 
         # normalize point-query coordinates
         points_queries = points_queries.float().to(outputs_class.device)
