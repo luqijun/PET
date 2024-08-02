@@ -48,6 +48,12 @@ class SetCriterion(nn.Module):
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
 
+        raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none') # (B)
+
+        not_selected_idx_split = outputs['not_selected_idx_split']
+        not_selected_idx = torch.cat([tuple_idx[0] for tuple_idx in not_selected_idx_split]), torch.cat([tuple_idx[1] for tuple_idx in not_selected_idx_split])
+        raw_ce_loss[not_selected_idx] = 0.0
+
         # compute classification loss
         if 'div' in kwargs:
             # get sparse / dense image index
@@ -61,7 +67,6 @@ class SetCriterion(nn.Module):
             weights = target_classes.clone().float()
             weights[weights == 0] = self.empty_weight[0]
             weights[weights == 1] = self.empty_weight[1]
-            raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none')
 
             # binarize split map
             split_map = kwargs['div']
@@ -78,7 +83,8 @@ class SetCriterion(nn.Module):
             loss_ce_nondiv = (raw_ce_loss * weights * non_div_mask).sum() / ((weights * non_div_mask).sum() + eps)
             loss_ce = loss_ce + loss_ce_nondiv
         else:
-            loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight, ignore_index=-1)
+            loss_ce = raw_ce_loss.mean()
+            # loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight, ignore_index=-1)
 
         losses = {'loss_ce': loss_ce}
         return losses
@@ -101,6 +107,10 @@ class SetCriterion(nn.Module):
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
         loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+
+        points_filter_split = outputs['points_filter_split']
+        points_filter = torch.cat(points_filter_split, dim=0)
+        loss_points_raw[points_filter, :] = 0.0
 
         # 使用深度权重
         # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
@@ -143,6 +153,12 @@ class SetCriterion(nn.Module):
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
+    def _get_src_permutation_idx_split(self, indices):
+        # permute predictions following indices
+        batch_idx = [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
+        src_idx = [src for (src, _) in indices]
+        return [(b_i, s_i) for b_i, s_i in zip(batch_idx, src_idx)]
+
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
         batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
@@ -173,6 +189,31 @@ class SetCriterion(nn.Module):
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_points)
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()
+
+        # out scores
+        # points_lengthes = [len(tgt['points']) for tgt in targets]
+        points_lengthes_valid = [round(len(tgt['points']) * 0.9) for tgt in targets ]
+        idx_spit = self._get_src_permutation_idx_split(indices)
+
+        out_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[..., 1]
+        points_filter_split =[]
+        selected_idx_split = []
+        not_selected_idx_split = []
+        for b_i, idx in enumerate(idx_spit):
+            one_out_scores_i = out_scores[idx]
+            k_num = min(points_lengthes_valid[b_i], len(one_out_scores_i))
+            _, selected_idx = torch.topk(one_out_scores_i, k=k_num, dim=0)
+
+            one_point_mask = torch.full_like(one_out_scores_i, True, dtype=torch.bool, device=out_scores.device)
+            one_point_mask[selected_idx] = False
+
+            points_filter_split.append(one_point_mask)
+            selected_idx_split.append((idx[0][selected_idx], idx[1][selected_idx]))
+            not_selected_idx_split.append((idx[0][one_point_mask], idx[1][one_point_mask]))
+
+        outputs['points_filter_split'] = points_filter_split
+        outputs['selected_idx_split'] = selected_idx_split
+        outputs['not_selected_idx_split'] = not_selected_idx_split
 
         # compute all the requested losses
         losses = {}
