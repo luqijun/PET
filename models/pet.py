@@ -159,16 +159,22 @@ class PET(nn.Module):
         return losses
 
     def pet_forward(self, samples, features, pos, **kwargs):
+
+        fea_x8 = features['8x'].tensors
+        # apply seg head
+        seg_map = self.seg_head(fea_x8)
+        seg_attention = seg_map.sigmoid()
+        for fea in features.values():
+            fea.tensors = fea.tensors * F.interpolate(seg_attention, size=fea.tensors.shape[-2:])
+
         # context encoding
         src, mask = features[self.encode_feats].decompose()
         src_pos_embed = pos[self.encode_feats]
         assert mask is not None
+
         encode_src = self.context_encoder(src, src_pos_embed, mask)
         context_info = (encode_src, src_pos_embed, mask)
-        
-        # apply seg head
-        seg_map = self.seg_head(encode_src)
-        
+
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
