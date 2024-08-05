@@ -24,7 +24,7 @@ class PET(nn.Module):
     """
     def __init__(self, backbone, num_classes, args=None):
         super().__init__()
-        self.backbone = backbone
+        self.back__bone = backbone
         
         # positional embedding
         self.pos_embed = build_position_encoding(args)
@@ -63,15 +63,15 @@ class PET(nn.Module):
 
         # depth adapt
         self.adapt_pos1d = nn.Sequential(
-            nn.Linear(backbone.num_channels, backbone.num_channels),
+            nn.Linear(args.hidden_dim, args.hidden_dim),
             nn.ReLU(),
-            nn.Linear(backbone.num_channels, backbone.num_channels),
+            nn.Linear(args.hidden_dim, args.hidden_dim),
         )
         self.split_depth_th = 0.4
         
         # level embeding
         self.level_embed = nn.Parameter(
-            torch.Tensor(2, backbone.num_channels))
+            torch.Tensor(2, args.hidden_dim))
 
         self.bce_loss = nn.BCEWithLogitsLoss()
         normal_(self.level_embed)
@@ -85,7 +85,7 @@ class PET(nn.Module):
         # backbone
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
-        features, pos = self.backbone(samples)
+        features, pos = self.back__bone(samples)
 
         # positional embedding
         dense_input_embed = self.pos_embed(samples)
@@ -313,7 +313,10 @@ def build_pet(args):
     # build model
     num_classes = 1
     args.num_classes = num_classes
-    backbone = build_backbone_vgg(args)
+    if args.backbone == "ffnet":
+        backbone = build_ffnet(args)
+    else:
+        backbone = build_backbone_vgg(args)
     model = PET(
         backbone,
         num_classes=num_classes,
