@@ -133,7 +133,15 @@ class PET(nn.Module):
         output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
         for name in list(output_names):
             if 'pred' in name:
-                if index_dense is None:
+                if name == 'pred_counts':
+                    if out_sparse != None and out_dense != None:
+                        div_out[name] = torch.cat(
+                            [out_sparse[name].unsqueeze(0), out_dense[name].unsqueeze(0)], dim=1)
+                    elif out_sparse != None:
+                        div_out[name] = out_sparse[name].unsqueeze(0)
+                    else:
+                        div_out[name] = out_dense[name].unsqueeze(0)
+                elif index_dense is None:
                     div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
                 elif index_sparse is None:
                     div_out[name] = out_dense[name][index_dense].unsqueeze(0)
@@ -225,8 +233,8 @@ class PET(nn.Module):
 
         # compute loss
         if epoch >= warmup_ep:
-            loss_dict_sparse = criterion(output_sparse, targets, div=outputs['split_map_sparse'])
-            loss_dict_dense = criterion(output_dense, targets, div=outputs['split_map_dense'])
+            loss_dict_sparse = criterion(output_sparse, targets, div=outputs['split_map_sparse'], div_raw=outputs['split_map_raw'])
+            loss_dict_dense = criterion(output_dense, targets, div=outputs['split_map_dense'], div_raw=outputs['split_map_raw'])
         else:
             loss_dict_sparse = criterion(output_sparse, targets)
             loss_dict_dense = criterion(output_dense, targets)

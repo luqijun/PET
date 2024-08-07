@@ -80,11 +80,35 @@ class WinDecoderTransformer(nn.Module):
         self.nhead = nhead
         self.num_layer = num_decoder_layers
 
+        # 用于计算人数
+        self.count_token_4x = nn.Parameter(torch.zeros(1, 1, d_model))
+        nn.init.normal_(self.count_token_4x, std=1e-6)
+        self.count_token_pos_embed_4x = nn.Parameter(torch.zeros(1, 1, 256))
+
+        self.count_token_8x = nn.Parameter(torch.zeros(1, 1, d_model))
+        nn.init.normal_(self.count_token_8x, std=1e-6)
+        self.count_token_pos_embed_8x = nn.Parameter(torch.zeros(1, 1, 256))
+
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-    
+
+    def add_count_token(self, tgt, query_embed_win, **kwargs):
+        B = tgt.shape[1]
+        if kwargs['pq_stride'] == 4:
+            count_token = self.count_token_4x
+            count_token_pos_embed = self.count_token_pos_embed_4x
+        else:
+            count_token = self.count_token_8x
+            count_token_pos_embed = self.count_token_pos_embed_8x
+
+        count_token = count_token.expand(-1, B, -1)
+        count_token_pos_embed = count_token_pos_embed.expand(-1, B, -1)
+        tgt = torch.cat([count_token, tgt], dim=0)
+        query_embed_win = torch.cat([count_token_pos_embed, query_embed_win], dim=0)
+        return tgt, query_embed_win
+
     def decoder_forward(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
                         depth_embed, **kwargs):
         """ 
@@ -104,12 +128,19 @@ class WinDecoderTransformer(nn.Module):
         # tgt += depth_embed_win
         # tgt = self.cross_attn_depth(tgt + query_embed_win, depth_embed_win + query_embed_win, depth_embed_win)[0]
 
+        # add count token
+        tgt, query_embed_win = self.add_count_token(tgt, query_embed_win, **kwargs)
+
         # decoder attention
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
+        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
                                                                         query_pos=query_embed_win, **kwargs)
-        hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW) for hs_w in hs_win]
+
+        hs_tmp = [window_partition_reverse(hs_w[0:1], 1, 1, qH // dec_win_h, qW // dec_win_w) for hs_w in hs_win]
+        hs_count = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
+
+        hs_tmp = [window_partition_reverse(hs_w[1:], dec_win_h, dec_win_w, qH, qW) for hs_w in hs_win]
         hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
-        return hs
+        return hs_count, hs
     
     def decoder_forward_dynamic(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
                                 depth_embed, **kwargs):
@@ -123,11 +154,17 @@ class WinDecoderTransformer(nn.Module):
         # tgt += depth_embed
         # tgt = self.cross_attn_depth(tgt + query_embed, depth_embed + query_embed, depth_embed)[0]
 
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
+        # add count token
+        tgt, query_embed = self.add_count_token(tgt, query_embed, **kwargs)
+
+        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
                                                                         query_pos=query_embed, **kwargs)
-        num_layer, num_elm, num_win, dim = hs_win.shape
-        hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
-        return hs
+        num_layer, num_elm, num_win, dim = hs_win[:, 0:1].shape
+        hs_count = hs_win[:, 0:1].reshape(num_layer, num_elm * num_win, dim)
+
+        num_layer, num_elm, num_win, dim = hs_win[:, 1:].shape
+        hs = hs_win[:, 1:].reshape(num_layer, num_elm * num_win, dim)
+        return hs_count, hs
     
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
@@ -144,16 +181,16 @@ class WinDecoderTransformer(nn.Module):
             memory_win = memory_win[:,v_idx]
             pos_embed_win = pos_embed_win[:,v_idx]
             mask_win = mask_win[v_idx]
-            hs = self.decoder_forward_dynamic(query_feats, query_embed, 
+            hs_count, hs = self.decoder_forward_dynamic(query_feats, query_embed,
                                               memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
                                               depth_embed, **kwargs)
-            return hs
+            return hs_count, hs
         else:
             # decoder forward
-            hs = self.decoder_forward(query_feats, query_embed, 
+            hs_count, hs = self.decoder_forward(query_feats, query_embed,
                                       memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
                                       depth_embed,  **kwargs)
-            return hs.transpose(1, 2)
+            return hs_count.transpose(1, 2), hs.transpose(1, 2)
         
 
 class TransformerEncoder(nn.Module):

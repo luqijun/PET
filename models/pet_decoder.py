@@ -7,6 +7,7 @@ from torch import nn
 
 from .layers import *
 from .transformer import *
+from timm.models.layers import trunc_normal_
 
 class PETDecoder(nn.Module):
     """ 
@@ -21,8 +22,30 @@ class PETDecoder(nn.Module):
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
+        self.output_count = nn.Sequential(
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            # nn.Dropout(0.5),
+            nn.Linear(256, 1),
+            nn.ReLU()
+        )
+
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
+
+        # self.init_weights_vit_timm(self.class_embed)
+        # self.init_weights_vit_timm(self.coord_embed)
+        # self.init_weights_vit_timm(self.output_count)
+
+    def init_weights_vit_timm(module: nn.Module, name: str = '') -> None:
+        """ ViT weight initialization, original timm impl (for reproducibility) """
+        if isinstance(module, nn.Linear):
+            trunc_normal_(module.weight, std=.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif hasattr(module, 'init_weights'):
+            module.init_weights()
 
     def forward(self, samples, features, context_info, **kwargs):
         encode_src, src_pos_embed, mask = context_info
@@ -32,11 +55,13 @@ class PETDecoder(nn.Module):
 
         # point querying
         kwargs['pq_stride'] = self.pq_stride
-        hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
+        hs_count, hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
 
         # prediction
         points_queries = pqs[1]
-        outputs = self.predict(samples, points_queries, hs, **kwargs)
+        outputs = self.predict(samples, points_queries, hs, hs_count, **kwargs)
+        outputs['dec_win_size'] = kwargs['dec_win_size']
+        outputs['fea_shape'] = encode_src.shape[-2:]
         return outputs
 
     def get_point_query(self, samples, features, **kwargs):
@@ -165,13 +190,18 @@ class PETDecoder(nn.Module):
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx, depth_embed_win
 
-    def predict(self, samples, points_queries, hs, **kwargs):
+    def predict(self, samples, points_queries, hs, hs_count, **kwargs):
         """
         Crowd prediction
         """
         outputs_class = self.class_embed(hs)
         # normalize to 0~1
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
+
+        # count
+        # 系数为10时 54.53
+        coeffi_count = 1.0
+        outputs_counts = self.output_count(hs_count) * coeffi_count
 
         # normalize point-query coordinates
         img_shape = samples.tensors.shape[-2:]
@@ -190,5 +220,6 @@ class PETDecoder(nn.Module):
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
+        out['pred_counts'] = outputs_counts[-1]
         return out
 
