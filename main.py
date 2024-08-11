@@ -220,21 +220,33 @@ def main(args):
             t2 = time.time()
 
             # output results
+            is_total = False
             mae, mse = test_stats['mae'], test_stats['mse']
-            if mae < best_mae:
+            mae_cnt, mse_cnt = test_stats['mae_cnt'], test_stats['mse_cnt']
+            if mae < best_mae or mae_cnt < best_mae:
                 best_epoch = epoch
-                best_mae = mae
-            if mse < best_mse:
+                if mae_cnt < mae:
+                    best_mae = mae_cnt
+                    is_total = True
+                else:
+                    best_mae = mae
+            if mse < best_mse or mse_cnt < best_mse:
                 best_mse_epoch = epoch
-                best_mse = mse
+                if mse_cnt < mse:
+                    best_mse = mse_cnt
+                    is_total = True
+                else:
+                    best_mse = mse
+
+
             print("\n==========================")
-            print("\nepoch:", epoch, "mae:", mae, "mse:", mse,
-                  "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "\tbest mse:", best_mse, "best epoch:", best_mse_epoch)
+            print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "mae_cnt:", mae_cnt, "mse_cnt:", mse_cnt,
+                  "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "\tbest mse:", best_mse, "best epoch:", best_mse_epoch, "\tis_total:", str(is_total))
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a") as log_file:
-                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\tbest mse:{}, best epoch: {}".format(
-                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
+                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\tbest mse:{}, best epoch: {}, \tis_total:{}".format(
+                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch, str(is_total)))
                                                 
                 # save best checkpoint
                 src_path = output_dir / 'checkpoint.pth'

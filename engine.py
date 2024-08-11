@@ -134,6 +134,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        # break
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -173,14 +174,19 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         mae = abs(predict_cnt - gt_cnt)
         mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
 
+        predict_cnt2 = outputs['pred_counts'][~torch.isnan(outputs['pred_counts'])].sum()
+        mae_cnt = abs(predict_cnt2 - gt_cnt)
+        mse_cnt = (predict_cnt2 - gt_cnt) * (predict_cnt2 - gt_cnt)
+
         # record results
         results = {}
         toTensor = lambda x: torch.tensor(x).float().cuda()
         results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
-        metric_logger.update(mae=results['mae'], mse=results['mse'])
+        results['mae_cnt'], results['mse_cnt'] = toTensor(mae_cnt), toTensor(mse_cnt)
+        metric_logger.update(mae=results['mae'], mse=results['mse'], mae_cnt=results['mae_cnt'], mse_cnt=results['mse_cnt'])
 
         results_reduced = utils.reduce_dict(results)
-        metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
+        metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'], mae_cnt=results_reduced['mae_cnt'], mse_cnt=results_reduced['mse_cnt'])
 
         # visualize predictions
         if vis_dir: 
@@ -197,4 +203,5 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     results['mse'] = np.sqrt(results['mse'])
+    results['mse_cnt'] = np.sqrt(results['mse_cnt'])
     return results
