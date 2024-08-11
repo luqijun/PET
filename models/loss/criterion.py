@@ -47,38 +47,7 @@ class SetCriterion(nn.Module):
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
-
-        # compute classification loss
-        if 'div' in kwargs:
-            # get sparse / dense image index
-            den = torch.tensor([target['density'] for target in targets])
-            den_sort = torch.sort(den)[1]
-            ds_idx = den_sort[:len(den_sort) // 2]
-            sp_idx = den_sort[len(den_sort) // 2:]
-            eps = 1e-5
-
-            # raw cross-entropy loss
-            weights = target_classes.clone().float()
-            weights[weights == 0] = self.empty_weight[0]
-            weights[weights == 1] = self.empty_weight[1]
-            raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none')
-
-            # binarize split map
-            split_map = kwargs['div']
-            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
-            div_mask = split_map > div_thrs
-
-            # dual supervision for sparse/dense images
-            loss_ce_sp = (raw_ce_loss * weights * div_mask)[sp_idx].sum() / ((weights * div_mask)[sp_idx].sum() + eps)
-            loss_ce_ds = (raw_ce_loss * weights * div_mask)[ds_idx].sum() / ((weights * div_mask)[ds_idx].sum() + eps)
-            loss_ce = loss_ce_sp + loss_ce_ds
-
-            # loss on non-div regions
-            non_div_mask = split_map <= div_thrs
-            loss_ce_nondiv = (raw_ce_loss * weights * non_div_mask).sum() / ((weights * non_div_mask).sum() + eps)
-            loss_ce = loss_ce + loss_ce_nondiv
-        else:
-            loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight, ignore_index=-1)
+        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight, ignore_index=-1)
 
         losses = {'loss_ce': loss_ce}
         return losses
@@ -101,140 +70,7 @@ class SetCriterion(nn.Module):
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
         loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
-
-        # 使用深度权重
-        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
-        # depth_weights = depth_weights[:len(loss_points_raw)]
-        # loss_points_raw *= depth_weights
-
-        if 'div' in kwargs:
-            # get sparse / dense index
-            den = torch.tensor([target['density'] for target in targets])
-            den_sort = torch.sort(den)[1]
-            img_ds_idx = den_sort[:len(den_sort) // 2]
-            img_sp_idx = den_sort[len(den_sort) // 2:]
-            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
-            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
-
-            # dual supervision for sparse/dense images
-            eps = 1e-5
-            split_map = kwargs['div']
-            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
-            div_mask = split_map > div_thrs
-            loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
-            loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
-            loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
-
-            # loss on non-div regions
-            non_div_mask = split_map <= div_thrs
-            loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
-                        non_div_mask[idx].sum() + eps)
-
-            # final point loss
-            losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
-        else:
-            losses['loss_points'] = loss_points_raw.sum() / num_points
-
-        return losses
-
-    def loss_counts(self, outputs, targets, indices, num_points, **kwargs):
-        """
-        SmoothL1 regression loss:
-           - targets dicts must contain the key "points" containing a tensor of dim [nb_target_points, 2]
-        """
-        assert 'pred_counts' in outputs
-
-        pq_stride = outputs['pq_stride']
-        dec_win_size = outputs['dec_win_size']
-        win_w, win_h = dec_win_size
-        win_w *= pq_stride
-        win_h *= pq_stride
-
-
-        pred_counts = outputs['pred_counts'].flatten(1)
-        gt_label_maps = torch.stack([tgt['label_map'] for tgt in targets], dim=0)
-
-        B, H, W = gt_label_maps.shape
-        gt_count_maps = gt_label_maps.reshape(B, H // win_h, win_h, W // win_w, win_w).permute(0, 1, 3, 2, 4)\
-            .flatten(-2).sum(-1).flatten(1)
-
-        loss_counts_raw = F.l1_loss(pred_counts, gt_count_maps, reduction='none')
-
-        if 'div' in kwargs:
-            # get sparse / dense image index
-            den = torch.tensor([target['density'] for target in targets])
-            den_sort = torch.sort(den)[1]
-            ds_idx = den_sort[:len(den_sort) // 2]
-            sp_idx = den_sort[len(den_sort) // 2:]
-            eps = 1e-5
-
-            # binarize split map
-            split_map_raw = kwargs['div_raw']
-            split_map_raw = F.interpolate(split_map_raw, size=(H // win_h, W // win_w))
-            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
-            div_mask = split_map_raw > div_thrs
-            div_mask = div_mask.flatten(1)
-
-            # dual supervision for sparse/dense images
-            loss_count_sp = (loss_counts_raw * div_mask)[sp_idx].sum() / ((div_mask)[sp_idx].sum() + eps)
-            loss_count_ds = (loss_counts_raw * div_mask)[ds_idx].sum() / ((div_mask)[ds_idx].sum() + eps)
-            loss_counts = loss_count_sp + loss_count_ds
-
-            # loss on non-div regions
-            non_div_mask = split_map_raw <= div_thrs
-            non_div_mask = non_div_mask.flatten(1)
-            loss_ce_nondiv = (loss_counts_raw * non_div_mask).sum() / ((non_div_mask).sum() + eps)
-            loss_counts = loss_counts + loss_ce_nondiv
-        else:
-            loss_counts = loss_counts_raw.mean()
-
-        return { 'loss_counts': loss_counts }
-
-        # get indices
-        idx = self._get_src_permutation_idx(indices)
-        src_points = outputs['pred_points'][idx]
-        target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
-        # compute regression loss
-        losses = {}
-        img_shape = outputs['img_shape']
-        img_h, img_w = img_shape
-        target_points[:, 0] /= img_h
-        target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
-
-        # 使用深度权重
-        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
-        # depth_weights = depth_weights[:len(loss_points_raw)]
-        # loss_points_raw *= depth_weights
-
-        if 'div' in kwargs:
-            # get sparse / dense index
-            den = torch.tensor([target['density'] for target in targets])
-            den_sort = torch.sort(den)[1]
-            img_ds_idx = den_sort[:len(den_sort) // 2]
-            img_sp_idx = den_sort[len(den_sort) // 2:]
-            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
-            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
-
-            # dual supervision for sparse/dense images
-            eps = 1e-5
-            split_map = kwargs['div']
-            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
-            div_mask = split_map > div_thrs
-            loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
-            loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
-            loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
-
-            # loss on non-div regions
-            non_div_mask = split_map <= div_thrs
-            loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
-                        non_div_mask[idx].sum() + eps)
-
-            # final point loss
-            losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
-        else:
-            losses['loss_points'] = loss_points_raw.sum() / num_points
+        losses['loss_points'] = loss_points_raw.sum() / num_points
 
         return losses
 
@@ -254,7 +90,6 @@ class SetCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'points': self.loss_points,
-            'counts': self.loss_counts,
         }
         assert loss in loss_map, f'{loss} loss is not defined'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)

@@ -55,11 +55,11 @@ class PETDecoder(nn.Module):
 
         # point querying
         kwargs['pq_stride'] = self.pq_stride
-        hs_count, hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
+        hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
 
         # prediction
         points_queries = pqs[1]
-        outputs = self.predict(samples, points_queries, hs, hs_count, **kwargs)
+        outputs = self.predict(samples, points_queries, hs, **kwargs)
         outputs['dec_win_size'] = kwargs['dec_win_size']
         outputs['fea_shape'] = encode_src.shape[-2:]
         return outputs
@@ -71,19 +71,11 @@ class PETDecoder(nn.Module):
         src, _ = features[self.feat_name].decompose()
 
         # generate points queries and position embedding
-        if 'train' in kwargs:
-            query_embed, points_queries, query_feats, depth_embed = self.points_queris_embed(samples, self.pq_stride,
-                                                                                             src, **kwargs)
-            query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
-            depth_embed = depth_embed.flatten(2).permute(2, 0, 1)
-            v_idx = None
-        else:
-            query_embed, points_queries, query_feats, v_idx, depth_embed = self.points_queris_embed_inference(samples,
-                                                                                                              self.pq_stride,
-                                                                                                              src,
-                                                                                                              **kwargs)
+        query_embed, points_queries, query_feats = self.points_queris_embed(samples, self.pq_stride,
+                                                                            src, **kwargs)
+        query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
 
-        out = (query_embed, points_queries, query_feats, v_idx, depth_embed)
+        out = (query_embed, points_queries, query_feats)
         return out
 
     def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
@@ -91,8 +83,7 @@ class PETDecoder(nn.Module):
         Generate point query embedding during training
         """
         # dense position encoding at every pixel location
-        depth_input_embed = kwargs['depth_input_embed'] # B, C, H, W
-        dense_input_embed = kwargs['dense_input_embed']
+        dense_input_embed = kwargs['dense_input_embed'] # B, C, H, W
         
         if 'level_embed' in kwargs:
             level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
@@ -122,20 +113,14 @@ class PETDecoder(nn.Module):
         query_feats = src[:, :, shift_y_down,shift_x_down]
         query_feats = query_feats.view(bs, c, h, w)
 
-        # depth_embed
-        depth_embed = depth_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
-        bs, c = depth_embed.shape[:2]
-        depth_embed = depth_embed.view(bs, c, h, w)
-
-        return query_embed, points_queries, query_feats, depth_embed
+        return query_embed, points_queries, query_feats
     
     def points_queris_embed_inference(self, samples, stride=8, src=None, **kwargs):
         """
         Generate point query embedding during inference
         """
         # dense position encoding at every pixel location
-        depth_input_embed = kwargs['depth_input_embed']  # B, C, H, W
-        dense_input_embed = kwargs['dense_input_embed']
+        dense_input_embed = kwargs['dense_input_embed'] # B, C, H, W
         
         if 'level_embed' in kwargs:
             level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
@@ -157,7 +142,6 @@ class PETDecoder(nn.Module):
 
         # get points queries embedding 
         query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
-        depth_embed = depth_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
         bs, c = query_embed.shape[:2]
 
         # get points queries features, equivalent to nearest interpolation
@@ -166,42 +150,23 @@ class PETDecoder(nn.Module):
         
         # window-rize
         query_embed = query_embed.reshape(bs, c, h, w)
-        depth_embed = depth_embed.reshape(bs, c, h, w)
         points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
         query_feats = query_feats.reshape(bs, c, h, w)
 
         dec_win_w, dec_win_h = kwargs['dec_win_size']
         query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        depth_embed_win = window_partition(depth_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
         points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        
-        # dynamic point query generation
-        div = kwargs['div']
-        thrs = 0.5
-        div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > thrs).sum(dim=0)[:,0]
-        v_idx = valid_div > 0
-        query_embed_win = query_embed_win[:, v_idx]
-        query_feats_win = query_feats_win[:, v_idx]
-        depth_embed_win = depth_embed_win[:, v_idx]
-        points_queries_win = points_queries_win.to(v_idx.device)
-        points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
     
-        return query_embed_win, points_queries_win, query_feats_win, v_idx, depth_embed_win
+        return query_embed_win, points_queries_win, query_feats_win
 
-    def predict(self, samples, points_queries, hs, hs_count, **kwargs):
+    def predict(self, samples, points_queries, hs, **kwargs):
         """
         Crowd prediction
         """
         outputs_class = self.class_embed(hs)
         # normalize to 0~1
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
-
-        # count
-        # 系数为10时 54.53
-        coeffi_count = 1.0
-        outputs_counts = self.output_count(hs_count) * coeffi_count
 
         # normalize point-query coordinates
         img_shape = samples.tensors.shape[-2:]
@@ -220,6 +185,5 @@ class PETDecoder(nn.Module):
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
-        out['pred_counts'] = outputs_counts[-1]
         return out
 
