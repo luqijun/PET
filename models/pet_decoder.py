@@ -59,9 +59,10 @@ class PETDecoder(nn.Module):
 
         # prediction
         points_queries = pqs[1]
+        kwargs['fea_shape'] = pqs[2].shape[-2:]
         outputs = self.predict(samples, points_queries, hs, hs_count, **kwargs)
         outputs['dec_win_size'] = kwargs['dec_win_size']
-        outputs['fea_shape'] = encode_src.shape[-2:]
+        outputs['fea_shape'] = pqs[2].shape[-2:]
         return outputs
 
     def get_point_query(self, samples, features, **kwargs):
@@ -201,6 +202,7 @@ class PETDecoder(nn.Module):
         # count
         # 系数为10时 54.53
         coeffi_count = 1.0
+        # hs_count = hs_count.mean(dim=-2)
         outputs_counts = self.output_count(hs_count) * coeffi_count
 
         # normalize point-query coordinates

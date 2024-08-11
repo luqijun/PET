@@ -8,7 +8,7 @@ from torch import nn
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
 import math
-
+from models.transformer.utils import window_partition
 
 class SetCriterion(nn.Module):
     """ Compute the loss for PET:
@@ -47,6 +47,7 @@ class SetCriterion(nn.Module):
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
+        outputs['target_classes'] = target_classes
 
         # compute classification loss
         if 'div' in kwargs:
@@ -147,18 +148,30 @@ class SetCriterion(nn.Module):
         pq_stride = outputs['pq_stride']
         dec_win_size = outputs['dec_win_size']
         win_w, win_h = dec_win_size
-        win_w *= pq_stride
-        win_h *= pq_stride
-
 
         pred_counts = outputs['pred_counts'].flatten(1)
         gt_label_maps = torch.stack([tgt['label_map'] for tgt in targets], dim=0)
 
-        B, H, W = gt_label_maps.shape
-        gt_count_maps = gt_label_maps.reshape(B, H // win_h, win_h, W // win_w, win_w).permute(0, 1, 3, 2, 4)\
-            .flatten(-2).sum(-1).flatten(1)
+        # 使用target_classes作为目标 56.62 463ep
+        B = pred_counts.shape[0]
+        fea_h, fea_w = outputs['fea_shape']
+        gt_count_maps = outputs['target_classes'].reshape(B, fea_h, fea_w).unsqueeze(1)
+        gt_count_maps = window_partition(gt_count_maps, window_size_h=win_h, window_size_w=win_w).sum(0).reshape(B, -1)
 
+        # 使用原始标签作为目标 分成window
+        # win_w *= pq_stride
+        # win_h *= pq_stride
+        # B, H, W = gt_label_maps.shape
+        # gt_count_maps = gt_label_maps.reshape(B, H // win_h, win_h, W // win_w, win_w).permute(0, 1, 3, 2, 4)\
+        #     .flatten(-2).sum(-1).flatten(1)
+
+        # 使用原始标签作为目标
+        # win_w *= pq_stride
+        # win_h *= pq_stride
+
+        # gt_count_maps = gt_label_maps.flatten(1).sum(-1)
         loss_counts_raw = F.l1_loss(pred_counts, gt_count_maps, reduction='none')
+        # loss_counts = loss_counts_raw.mean()
 
         if 'div' in kwargs:
             # get sparse / dense image index
@@ -170,7 +183,9 @@ class SetCriterion(nn.Module):
 
             # binarize split map
             split_map_raw = kwargs['div_raw']
-            split_map_raw = F.interpolate(split_map_raw, size=(H // win_h, W // win_w))
+            split_map_raw = F.interpolate(split_map_raw, size=(fea_h // win_h, fea_w // win_w))
+            # split_map_raw = F.interpolate(split_map_raw, size=(H // win_h, W // win_w))
+            # split_map_raw = F.interpolate(split_map_raw, size=(1, 1))
             div_thrs = self.div_thrs_dict[outputs['pq_stride']]
             div_mask = split_map_raw > div_thrs
             div_mask = div_mask.flatten(1)
@@ -178,65 +193,17 @@ class SetCriterion(nn.Module):
             # dual supervision for sparse/dense images
             loss_count_sp = (loss_counts_raw * div_mask)[sp_idx].sum() / ((div_mask)[sp_idx].sum() + eps)
             loss_count_ds = (loss_counts_raw * div_mask)[ds_idx].sum() / ((div_mask)[ds_idx].sum() + eps)
-            loss_counts = loss_count_sp + loss_count_ds
 
             # loss on non-div regions
             non_div_mask = split_map_raw <= div_thrs
             non_div_mask = non_div_mask.flatten(1)
             loss_ce_nondiv = (loss_counts_raw * non_div_mask).sum() / ((non_div_mask).sum() + eps)
-            loss_counts = loss_counts + loss_ce_nondiv
+            loss_counts = loss_count_sp + loss_count_ds + loss_ce_nondiv
         else:
             loss_counts = loss_counts_raw.mean()
 
         return { 'loss_counts': loss_counts }
 
-        # get indices
-        idx = self._get_src_permutation_idx(indices)
-        src_points = outputs['pred_points'][idx]
-        target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
-        # compute regression loss
-        losses = {}
-        img_shape = outputs['img_shape']
-        img_h, img_w = img_shape
-        target_points[:, 0] /= img_h
-        target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
-
-        # 使用深度权重
-        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
-        # depth_weights = depth_weights[:len(loss_points_raw)]
-        # loss_points_raw *= depth_weights
-
-        if 'div' in kwargs:
-            # get sparse / dense index
-            den = torch.tensor([target['density'] for target in targets])
-            den_sort = torch.sort(den)[1]
-            img_ds_idx = den_sort[:len(den_sort) // 2]
-            img_sp_idx = den_sort[len(den_sort) // 2:]
-            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
-            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
-
-            # dual supervision for sparse/dense images
-            eps = 1e-5
-            split_map = kwargs['div']
-            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
-            div_mask = split_map > div_thrs
-            loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
-            loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
-            loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
-
-            # loss on non-div regions
-            non_div_mask = split_map <= div_thrs
-            loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
-                        non_div_mask[idx].sum() + eps)
-
-            # final point loss
-            losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
-        else:
-            losses['loss_points'] = loss_points_raw.sum() / num_points
-
-        return losses
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
