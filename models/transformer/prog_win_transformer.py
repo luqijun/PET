@@ -93,7 +93,7 @@ class WinDecoderTransformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def decoder_forward(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
+    def decoder_forward(self, query_feats, query_embed, query_mask, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
                         **kwargs):
         """ 
         decoder forward during training
@@ -107,34 +107,18 @@ class WinDecoderTransformer(nn.Module):
         tgt = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
         # decoder attention
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
-                                                                        query_pos=query_embed_win, **kwargs)
+        hs_win = self.decoder(tgt, memory_win,
+                              tgt_mask=query_mask, memory_key_padding_mask=mask_win, pos=pos_embed_win,
+                              query_pos=query_embed_win, **kwargs)
 
         hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW) for hs_w in hs_win]
         hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
         return hs
-    
-    def decoder_forward_dynamic(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
-                                **kwargs):
-        """ 
-        decoder forward during inference
-        """       
-        # decoder attention
-        tgt = query_feats
 
-        # add count token
-        tgt, query_embed = self.add_count_token(tgt, query_embed, **kwargs)
-
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
-                                                                        query_pos=query_embed, **kwargs)
-
-        num_layer, num_elm, num_win, dim = hs_win[:, 1:].shape
-        hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
-        return hs
     
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
-        query_embed, points_queries, query_feats = pqs
+        points_queries, query_feats, query_embed, query_mask = pqs
         self.dec_win_w, self.dec_win_h = kwargs['dec_win_size']
         
         # window-rize memory input
@@ -142,7 +126,7 @@ class WinDecoderTransformer(nn.Module):
         memory_win, pos_embed_win, mask_win = enc_win_partition(src, pos_embed, mask, 
                                                     int(self.dec_win_h/div_ratio), int(self.dec_win_w/div_ratio))
 
-        hs = self.decoder_forward(query_feats, query_embed,
+        hs = self.decoder_forward(query_feats, query_embed, query_mask,
                                   memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
                                   **kwargs)
         return hs.transpose(1, 2)

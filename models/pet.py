@@ -81,6 +81,14 @@ class PET(nn.Module):
             out = self.test_forward(samples, features, pos, **kwargs)   
         return out
 
+    def train_forward(self, samples, features, pos, **kwargs):
+        outputs = self.pet_forward(samples, features, pos, **kwargs)
+
+        # compute loss
+        criterion, targets, epoch = kwargs['criterion'], kwargs['targets'], kwargs['epoch']
+        losses = self.compute_loss(outputs, criterion, targets, epoch, samples)
+        return losses
+
     def test_forward(self, samples, features, pos, **kwargs):
         thrs = 0.5  # inference threshold
         outputs = self.pet_forward(samples, features, pos, **kwargs)
@@ -104,14 +112,6 @@ class PET(nn.Module):
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
-
-    def train_forward(self, samples, features, pos, **kwargs):
-        outputs = self.pet_forward(samples, features, pos, **kwargs)
-
-        # compute loss
-        criterion, targets, epoch = kwargs['criterion'], kwargs['targets'], kwargs['epoch']
-        losses = self.compute_loss(outputs, criterion, targets, epoch, samples)
-        return losses
 
     def pet_forward(self, samples, features, pos, **kwargs):
 

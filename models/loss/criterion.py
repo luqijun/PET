@@ -95,6 +95,17 @@ class SetCriterion(nn.Module):
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
 
     def forward(self, outputs, targets, **kwargs):
+        losses = self.forward_single_output(outputs, targets, **kwargs)
+        if 'enc_outputs' in outputs:
+            enc_outputs = outputs['enc_outputs']
+            losses_enc = self.forward_single_output(enc_outputs, targets, **kwargs)
+
+            for key in losses.keys():
+                losses[key] += losses_enc[key]
+        return losses
+
+
+    def forward_single_output(self, outputs, targets, **kwargs):
         """ Loss computation
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
