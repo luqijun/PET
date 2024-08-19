@@ -61,7 +61,7 @@ class HungarianMatcher(nn.Module):
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
-        cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+        cost_point = batch_cdist(out_points_abs, tgt_points, batch_size=2048, p=2) # torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix
         C = cost_point * depth_weights + self.cost_class * cost_class
@@ -71,6 +71,18 @@ class HungarianMatcher(nn.Module):
         sizes = [len(v["points"]) for v in targets]
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+
+
+def batch_cdist(out_points, tgt_points, batch_size, p=2):
+    num_batches = (len(out_points) + batch_size - 1) // batch_size
+    dist_matrix = torch.zeros((len(out_points), len(tgt_points)), device=out_points.device)
+
+    for i in range(num_batches):
+        start = i * batch_size
+        end = min((i + 1) * batch_size, len(out_points))
+        dist_matrix[start:end] = torch.cdist(out_points[start:end], tgt_points, p=2)
+
+    return dist_matrix
 
 
 def build_matcher(args):

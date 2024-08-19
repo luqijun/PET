@@ -15,7 +15,7 @@ from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
 from .utils import pos2posemb1d
-from .layers import Segmentation_Head
+from .layers import Segmentation_Head, build_deformable_detr
     
 
 class PET(nn.Module):
@@ -41,8 +41,9 @@ class PET(nn.Module):
         self.encode_feats = '8x'
         enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
         args.enc_layers = len(enc_win_list)
-        self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
-        
+        encoder, decoder = build_deformable_detr([args.hidden_dim, args.hidden_dim], num_feature_levels=2, two_stage=True) # build_encoder(args, enc_win_list=enc_win_list)
+        self.encoder = encoder
+
         # segmentation
         self.seg_head = Segmentation_Head(args.hidden_dim, 1)
 
@@ -57,9 +58,8 @@ class PET(nn.Module):
 
         # point-query quadtree
         args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
-        transformer = build_decoder(args)
-        self.quadtree_sparse = PETDecoder(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
-        self.quadtree_dense = PETDecoder(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
+        self.quadtree_sparse = PETDecoder(num_classes, quadtree_layer='sparse', args=args, decoder=decoder)
+        self.quadtree_dense = PETDecoder(num_classes, quadtree_layer='dense', args=args, decoder=decoder)
 
         # depth adapt
         self.adapt_pos1d = nn.Sequential(
@@ -96,9 +96,11 @@ class PET(nn.Module):
         #kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
         kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
 
-        # feature projection
-        features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
-        features['8x'] = NestedTensor(self.input_proj[1](features['8x'].tensors), features['8x'].mask)
+        features['4x'] = NestedTensor(features['4x'].tensors, features['4x'].mask)
+        features['8x'] = NestedTensor(features['8x'].tensors, features['8x'].mask)
+        # # feature projection
+        # features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
+        # features['8x'] = NestedTensor(self.input_proj[1](features['8x'].tensors), features['8x'].mask)
 
         # forward
         if 'train' in kwargs:
@@ -168,21 +170,26 @@ class PET(nn.Module):
             fea.tensors = fea.tensors * F.interpolate(seg_attention, size=fea.tensors.shape[-2:])
 
         # context encoding
-        src, mask = features[self.encode_feats].decompose()
-        src_pos_embed = pos[self.encode_feats]
-        assert mask is not None
+        # src, mask = features[self.encode_feats].decompose()
+        # src_pos_embed = pos[self.encode_feats]
+        # assert mask is not None
 
-        encode_src = self.context_encoder(src, src_pos_embed, mask)
-        context_info = (encode_src, src_pos_embed, mask)
+        feature_list = list(features.values())
+        pos_list = list(pos.values())
+        hs, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten = self.encoder(samples, feature_list, pos_list)
+
+        B, C, h, w = fea_x8.shape
+        encode_src = hs[:,-h*w:].permute(0, 2, 1).reshape(B, C, h, w)
 
         # apply quadtree splitter
-        bs, _, src_h, src_w = src.shape
+        bs, _, src_h, src_w = fea_x8.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)        
+        split_map = self.quadtree_splitter(encode_src)
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
-        
+
+        context_info = (hs, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             # level embeding
@@ -190,6 +197,7 @@ class PET(nn.Module):
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+            split_map_sparse = outputs_sparse['div_new']
         else:
             outputs_sparse = None
         
@@ -200,6 +208,7 @@ class PET(nn.Module):
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            split_map_dense = outputs_dense['div_new']
         else:
             outputs_dense = None
         

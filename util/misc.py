@@ -251,7 +251,9 @@ class MetricLogger(object):
 
 def collate_fn(batch):
     batch = list(zip(*batch))
-    batch[0] = nested_tensor_from_tensor_list(batch[0])
+    masks = [tgt['mask'] for tgt in batch[1]]
+    batch[0] = nested_tensor_from_tensor_list(batch[0], masks)
+
     img_shape = batch[0].tensors.shape[-2:]
     for tgt in batch[1]:
         if tgt['depth'].shape[-2:] != img_shape:
@@ -260,12 +262,6 @@ def collate_fn(batch):
 
             # depth pad
             tgt['depth'] = torch.nn.functional.pad(tgt['depth'], (0, pad_w, 0, pad_h))
-
-        # depth level
-        # img_depth = tgt['depth']
-        # depth_level = torch.ones(img_depth.shape, device=img_depth.device)
-        # depth_level[img_depth > 0.4] = 0
-        # tgt['depth_level'] = depth_level
 
     return tuple(batch)
 
@@ -306,7 +302,13 @@ class NestedTensor(object):
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
+def inverse_sigmoid(x, eps=1e-5):
+    x = x.clamp(min=0, max=1)
+    x1 = x.clamp(min=eps)
+    x2 = (1 - x).clamp(min=eps)
+    return torch.log(x1/x2)
+
+def nested_tensor_from_tensor_list(tensor_list: List[Tensor], masks):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
@@ -324,9 +326,12 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
         device = tensor_list[0].device
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
         mask = torch.ones((b, h, w), dtype=torch.bool, device=device)
-        for img, pad_img, m in zip(tensor_list, tensor, mask):
+        for img, pad_img, m, m1 in zip(tensor_list, tensor, mask, masks):
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
-            m[: img.shape[1], :img.shape[2]] = False
+            if m1!=None:
+                m[: img.shape[1], :img.shape[2]] = m1[: img.shape[1], :img.shape[2]] #False
+            else:
+                m[: img.shape[1], :img.shape[2]] = False
     else:
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)

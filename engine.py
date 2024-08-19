@@ -131,9 +131,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if max_norm > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         optimizer.step()
+        del losses
+        torch.cuda.empty_cache()
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        break
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -181,6 +184,8 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
+
+        torch.cuda.empty_cache()
 
         # visualize predictions
         if vis_dir: 

@@ -49,7 +49,7 @@ class SetCriterion(nn.Module):
         target_classes[idx] = target_classes_o
 
         # compute classification loss
-        if 'div' in kwargs:
+        if 'div' in kwargs and kwargs['div'].shape[1] == src_logits.shape[1]:
             # get sparse / dense image index
             den = torch.tensor([target['density'] for target in targets])
             den_sort = torch.sort(den)[1]
@@ -107,7 +107,7 @@ class SetCriterion(nn.Module):
         # depth_weights = depth_weights[:len(loss_points_raw)]
         # loss_points_raw *= depth_weights
 
-        if 'div' in kwargs:
+        if 'div' in kwargs and kwargs['div'].shape[1] == outputs['pred_points'].shape[1]:
             # get sparse / dense index
             den = torch.tensor([target['density'] for target in targets])
             den_sort = torch.sort(den)[1]
@@ -158,6 +158,16 @@ class SetCriterion(nn.Module):
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
 
     def forward(self, outputs, targets, **kwargs):
+        losses = self.forward_single_output(outputs, targets, **kwargs)
+        if 'enc_outputs' in outputs:
+            enc_outputs = outputs['enc_outputs']
+            losses_enc = self.forward_single_output(enc_outputs, targets, **kwargs)
+
+            for key in losses.keys():
+                losses[key] += losses_enc[key]
+        return losses
+
+    def forward_single_output(self, outputs, targets, **kwargs):
         """ Loss computation
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -169,7 +179,7 @@ class SetCriterion(nn.Module):
 
         # compute the average number of target points accross all nodes, for normalization purposes
         num_points = sum(len(t["labels"]) for t in targets)
-        num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_points = torch.as_tensor([num_points], dtype=torch.float, device=outputs['pred_logits'].device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_points)
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()

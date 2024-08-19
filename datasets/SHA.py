@@ -81,20 +81,18 @@ class SHA(Dataset):
         img = torch.Tensor(img)
         # random scale
         scale = 1.0
+        mask = None
         if self.train:
             scale_range = [0.8, 1.2]           
             min_size = min(img.shape[1:])
             scale = random.uniform(*scale_range)
             
             # interpolation
-            if scale * min_size > self.patch_size:  
-                img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
-                img_depth = torch.nn.functional.interpolate(img_depth.unsqueeze(0), scale_factor=scale).squeeze(0)
-                img_seg = torch.nn.functional.interpolate(img_seg.unsqueeze(0), scale_factor=scale).squeeze(0)
-                points *= scale
-
-            # random crop patch
-            img, img_depth, img_seg, points = random_crop(img, img_depth, img_seg, points, patch_size=self.patch_size)
+            # if scale * min_size > self.patch_size:
+            img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
+            img_depth = torch.nn.functional.interpolate(img_depth.unsqueeze(0), scale_factor=scale).squeeze(0)
+            img_seg = torch.nn.functional.interpolate(img_seg.unsqueeze(0), scale_factor=scale).squeeze(0)
+            points *= scale
 
             # random flip
             if random.random() > 0.5 and self.flip:
@@ -103,9 +101,27 @@ class SHA(Dataset):
                 img_seg = torch.flip(img_seg, dims=[2])
                 points[:, 1] = self.patch_size - points[:, 1]
 
+            b, h, w = img.shape
+            if h < self.patch_size:
+                h = self.patch_size
+            if w < self.patch_size:
+                w = self.patch_size
+
+            mask = torch.ones((h, w), dtype=torch.bool)
+            mask[:img.shape[1], :img.shape[2]] = False
+            tensor = torch.zeros((3, h, w), dtype=img.dtype)
+            tensor[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+            img = tensor
+
+            # random crop patch
+            img, mask, img_depth, img_seg, points = random_crop(img, mask, img_depth, img_seg, points, patch_size=self.patch_size)
+
+
+
         # target
         target = {}
         points = torch.Tensor(points)
+        target['mask'] = mask
         target['points'] = points
         target['labels'] = torch.ones([points.shape[0]]).long()
 
@@ -190,9 +206,11 @@ def load_data(img_gt_path, train):
     return img, img_depth, points
 
 
-def random_crop(img, img_depth, img_seg, points, patch_size=256):
+def random_crop(img, mask, img_depth, img_seg, points, patch_size=256):
     patch_h = patch_size
     patch_w = patch_size
+
+
     
     # random crop
     start_h = random.randint(0, img.size(1) - patch_h) if img.size(1) > patch_h else 0
@@ -203,6 +221,7 @@ def random_crop(img, img_depth, img_seg, points, patch_size=256):
 
     # clip image and points
     result_img = img[:, start_h:end_h, start_w:end_w]
+    result_mask = mask[start_h:end_h, start_w:end_w]
     result_img_depth = img_depth[:, start_h:end_h, start_w:end_w]
     result_img_seg = img_seg[:, start_h:end_h, start_w:end_w]
     result_points = points[idx]
@@ -217,7 +236,7 @@ def random_crop(img, img_depth, img_seg, points, patch_size=256):
     result_img_seg = torch.nn.functional.interpolate(result_img_seg.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
     result_points[:, 0] *= fH
     result_points[:, 1] *= fW
-    return result_img, result_img_depth, result_img_seg, result_points
+    return result_img, result_mask, result_img_depth, result_img_seg, result_points
 
 
 def build(image_set, args):
