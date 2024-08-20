@@ -185,8 +185,8 @@ def load_data(img_gt_path, train):
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     img_depth = Image.open(img_depth_path)
     points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]
-    if train:
-        points = np.unique(points, axis=0)
+    # if train:
+    #     points = np.unique(points, axis=0)
     return img, img_depth, points
 
 

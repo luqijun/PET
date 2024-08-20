@@ -233,7 +233,8 @@ def main(args):
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a") as log_file:
-                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\tbest mse:{}, best epoch: {}".format(
+                    log_file.write("\nepoch: {}, mae: {}, mse: {}, time: {}, \n\n"
+                                   "best mae: {}, best epoch: {}\tbest mse: {}, best epoch: {}".format(
                                                 epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
                                                 
                 # save best checkpoint
