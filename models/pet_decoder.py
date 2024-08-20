@@ -85,7 +85,7 @@ class PETDecoder(nn.Module):
             enc_outputs_coord = torch.flip(enc_outputs_coord, dims=[-1])
 
             enc_outputs_class_scores = torch.softmax(enc_outputs_class, dim=-1)[..., 1]
-            num_queries = int(output_memory.shape[1] * 0.9)
+            num_queries = int(output_memory.shape[1] * 0.7)
             topk_proposals = torch.topk(enc_outputs_class_scores, num_queries, dim=1)[1]
             topk_coords_unact = torch.gather(
                 enc_outputs_coord_unact, 1,
@@ -168,6 +168,8 @@ class PETDecoder(nn.Module):
             (bs, num_queries, num_pos_feats * 4), with the last dimension
             arranged as (cx, cy, w, h)
         """
+        proposals = torch.flip(proposals, dims=[-1])
+
         scale = 2 * math.pi
         dim_t = torch.arange(
             num_pos_feats, dtype=torch.float32, device=proposals.device)
