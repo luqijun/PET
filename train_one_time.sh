@@ -1,10 +1,8 @@
 #!/bin/bash
 
 # 设置默认值
-epochs=${1:-"500"}
+epochs=${1:-"400"}
 eval_start=${2:-"100"}
-dataset_file = ${3:-"SHA"}
-output_dir = ${4:-"pet_model_ntimes"}
 
 # 输出参数值
 echo "total epochs : $epochs"
@@ -29,8 +27,8 @@ python -m torch.distributed.launch \
     --nheads=8 \
     --dropout=0.0 \
     --epochs=$epochs \
-    --dataset_file=$dataset_file \
+    --dataset_file="SHA" \
     --eval_start=$eval_start \
     --eval_freq=1 \
-    --output_dir=$output_dir
+    --output_dir="pet_model_ntimes"
     # --resume='outputs/SHA/pet_model/checkpoint.pth'

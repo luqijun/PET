@@ -41,12 +41,11 @@ def main():
         print(f'Executing iteration {i + 1}...')
 
         # 执行sh脚本并重定向输出到当前控制台
-        params = [epochs, eval_start, dataset_file, args.output_dir]
-        process = subprocess.Popen(['bash', sh_script, *params], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(['bash', sh_script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
         # 读取输出并提取“best mae”和“best mse”
-        mae = None
-        mse = None
+        mae = 0
+        mse = 0
         for line in process.stdout:
             print(line, end='')
             mae_match = mae_pattern.search(line)
@@ -63,8 +62,8 @@ def main():
         if os.path.exists(output_dir):
             # 复制输出目录到结果目录并重命名
             new_output_dir = os.path.join(result_dir, f'outputs_{i + 1}_{mae:.2f}_{mse:.2f}')
-            if os.path.exists(new_output_dir):
-                shutil.rmtree(new_output_dir)
+            # if os.path.exists(new_output_dir):
+            #     shutil.rmtree(new_output_dir)
             shutil.copytree(output_dir, new_output_dir)
             print(f'Copied {output_dir} to {new_output_dir}')
         else:
