@@ -137,7 +137,7 @@ def main(args):
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                 collate_fn=utils.collate_fn, num_workers=args.num_workers)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                drop_last=False, collate_fn=utils.collate_fn_val, num_workers=args.num_workers)
 
     # output directory and log 
     if utils.is_main_process:

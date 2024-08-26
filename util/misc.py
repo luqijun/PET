@@ -266,6 +266,15 @@ def collate_fn(batch):
     return tuple(batch)
 
 
+def collate_fn_val(batch):
+    batch = list(zip(*batch))
+    masks = batch[1][0]['masks']
+    batch[0] = nested_tensor_from_tensor_list(list(batch[0][0]), list(masks))
+
+    return tuple(batch)
+
+
+
 def _max_by_axis_pad(the_list):
     # type: (List[List[int]]) -> List[int]
     maxes = the_list[0]

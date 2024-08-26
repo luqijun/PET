@@ -94,13 +94,6 @@ class SHA(Dataset):
             img_seg = torch.nn.functional.interpolate(img_seg.unsqueeze(0), scale_factor=scale).squeeze(0)
             points *= scale
 
-            # random flip
-            if random.random() > 0.5 and self.flip:
-                img = torch.flip(img, dims=[2])
-                img_depth = torch.flip(img_depth, dims=[2])
-                img_seg = torch.flip(img_seg, dims=[2])
-                points[:, 1] = self.patch_size - points[:, 1]
-
             b, h, w = img.shape
             if h < self.patch_size:
                 h = self.patch_size
@@ -116,6 +109,29 @@ class SHA(Dataset):
             # random crop patch
             img, mask, img_depth, img_seg, points = random_crop(img, mask, img_depth, img_seg, points, patch_size=self.patch_size)
 
+            # random flip
+            if random.random() > 0.5 and self.flip:
+                img = torch.flip(img, dims=[2])
+                mask = torch.flip(mask, dims=[1])
+                img_depth = torch.flip(img_depth, dims=[2])
+                img_seg = torch.flip(img_seg, dims=[2])
+                points[:, 1] = self.patch_size - points[:, 1]
+
+        else:
+
+            blocks, masks, points_blocks = self.split_image_and_points(img, points, block_size=self.patch_size)
+            assert len(points) == sum(len(pb) for pb in points_blocks)
+            points_blocks = points_blocks
+            # target
+            target = {}
+            target['masks'] = masks
+            target['split_points'] = [torch.tensor(pb) for pb in points_blocks]
+            target['points'] = points
+            target['depth'] = img_depth
+            target['seg_map'] = img_seg.squeeze(0)
+            target['image_path'] = img_path
+            return blocks, target
+
 
 
         # target
@@ -124,6 +140,7 @@ class SHA(Dataset):
         target['mask'] = mask
         target['points'] = points
         target['labels'] = torch.ones([points.shape[0]]).long()
+        target['image_path'] = img_path
 
         # depth info
         h, w = img_depth.shape[-2:]
@@ -146,6 +163,50 @@ class SHA(Dataset):
             target['image_path'] = img_path
 
         return img, target
+
+    @staticmethod
+    def split_image_and_points(image, points, block_size=256):
+        # 获取图像的形状
+        C, H, W = image.shape
+
+        # 计算需要填充的行数和列数
+        pad_rows = (block_size - H % block_size) % block_size
+        pad_cols = (block_size - W % block_size) % block_size
+
+        # 填充图像
+        image_padded = torch.nn.functional.pad(image, (0, pad_cols, 0, pad_rows), mode='constant', value=0)
+
+        # 计算填充后的图像形状
+        H_padded, W_padded = image_padded.shape[1], image_padded.shape[2]
+
+        # 计算块的数量
+        num_blocks_h = H_padded // block_size
+        num_blocks_w = W_padded // block_size
+        num_blocks = num_blocks_h * num_blocks_w
+
+        # 初始化块和mask
+        blocks = torch.zeros((num_blocks, C, block_size, block_size), dtype=image.dtype, device=image.device)
+        masks = torch.ones((num_blocks, block_size, block_size), dtype=torch.bool, device=image.device)
+
+        # 拆分图像为块
+        for i in range(num_blocks_h):
+            for j in range(num_blocks_w):
+                block_idx = i * num_blocks_w + j
+                blocks[block_idx] = image_padded[:, i * block_size:(i + 1) * block_size,
+                                    j * block_size:(j + 1) * block_size]
+                masks[block_idx, :H - i * block_size, :W - j * block_size] = False
+
+        # 将点分配到相应的块中
+        points_blocks = [[] for _ in range(num_blocks)]
+        for point in points:
+            y, x = point
+            if 0 <= y < H and 0 <= x < W:
+                block_i = y // block_size
+                block_j = x // block_size
+                block_idx = (int)(block_i * num_blocks_w + block_j)
+                points_blocks[block_idx].append((y % block_size, x % block_size))
+
+        return blocks, masks, points_blocks
 
     def cal_depth_weight(self, depth_values, values):
 

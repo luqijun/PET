@@ -14,6 +14,8 @@ import torch.nn.functional as F
 
 import util.misc as utils
 from util.misc import NestedTensor
+from models.pet import PET
+from util.misc import save_tensor_to_image
 
 
 class DeNormalize(object):
@@ -55,7 +57,7 @@ def visualization(samples, targets, pred, vis_dir, gt_split_map=None, gt_seg_hea
 
     images = samples.tensors
     masks = samples.mask
-    for idx in range(images.shape[0]):
+    for idx in range(1): # images.shape[0]
         sample = restore_transform(images[idx])
         sample = pil_to_tensor(sample.convert('RGB')).numpy() * 255
         sample_vis = sample.transpose([1, 2, 0])[:, :, ::-1].astype(np.uint8).copy()
@@ -101,14 +103,16 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
+    maes = []
+    mses = []
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items() } for t in targets]
         gt_points = [target['points'] for target in targets]
 
-        outputs = model(samples, epoch=epoch, train=True, 
+        losses_data, outputs = model(samples, epoch=epoch, train=True,
                                         criterion=criterion, targets=targets)
-        loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
+        loss_dict, weight_dict, losses = losses_data['loss_dict'], losses_data['weight_dict'], losses_data['losses']
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
@@ -131,16 +135,54 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if max_norm > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         optimizer.step()
-        del losses
-        torch.cuda.empty_cache()
+        # del losses
+        # torch.cuda.empty_cache()
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        break
-    
+
+        # 显示数据
+        test_outputs = PET.test_forward_process(outputs, 0.4, targets=targets)
+        outputs_scores = torch.nn.functional.softmax(test_outputs['pred_logits'], -1)[:, :, 1][0]
+        outputs_points = test_outputs['pred_points'][0]
+        outputs_offsets = test_outputs['pred_offsets'][0]
+
+        # process predicted points
+        predict_cnt = len(outputs_scores)
+        gt_cnt = sum([tgt['points'].shape[0] for tgt in targets]) # targets[0]['points'].shape[0]
+
+        # compute error
+        mae = abs(predict_cnt - gt_cnt)
+        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+        maes.append(mae)
+        mses.append(mse)
+
+        # 可视化
+        if False:
+            vis_dir = "outputs/SHA/vis_train"
+            img_h, img_w = samples.tensors.shape[-2:]
+            pred_points_first = test_outputs['pred_points_first'].squeeze(0)
+            points = [[point[0] * img_h, point[1] * img_w] for point in pred_points_first] # if pred_points_first.shape[1] > 0 else pred_points_first # recover to actual points
+            gt_split_map = (test_outputs['gt_split_map'][0].detach().cpu().squeeze(
+                0) > 0.5).float().numpy() if 'gt_split_map' in test_outputs else None
+            gt_seg_head_map = (test_outputs['gt_seg_head_map'][0].detach().cpu().squeeze(
+                0)).float().numpy() if 'gt_seg_head_map' in test_outputs else None
+            pred_split_map = (test_outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            pred_seg_head_map = (test_outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            visualization(samples, targets, [points], vis_dir,
+                          gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
+                          pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
+
+
+        # break
+
+    one_epoch_mae = sum(maes) / len(maes)
+    one_epoch_mse = math.sqrt(sum(mses) / len(mses))
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("===================Averaged stats===================")
+    print(f"one_epoch_mae:{one_epoch_mae:2f} one_epoch_mse:{one_epoch_mse:2f}")
     print(metric_logger)
     print("====================================================")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -163,7 +205,19 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         img_h, img_w = samples.tensors.shape[-2:]
 
         # inference
-        outputs = model(samples, test=True, targets=targets)
+        split = True
+        if split:
+            max_batch = 4
+            split_samples_list = split_test_batch(max_batch, samples)
+            split_output_result = []
+            for split_sample in split_samples_list:
+                split_output = model(split_sample, test=True, targets=targets)
+                split_output_result.append(split_output)
+
+            outputs = merge_dicts(split_output_result)
+        else:
+            outputs = model(samples, test=True, targets=targets)
+
         outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
         outputs_points = outputs['pred_points'][0]
         outputs_offsets = outputs['pred_offsets'][0]
@@ -185,21 +239,91 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
 
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
         # visualize predictions
-        if vis_dir: 
-            points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
-            gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
-            gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
-            pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
-            pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+        if vis_dir:
+            # vis_dir = "outputs/SHA/vis"
+            test_outputs = outputs
+            img_h, img_w = samples.tensors.shape[-2:]
+            pred_points_first = test_outputs['pred_points_first'].squeeze(0)
+            points = [[point[0] * img_h, point[1] * img_w] for point in
+                      pred_points_first]  # if pred_points_first.shape[1] > 0 else pred_points_first # recover to actual points
+            gt_split_map = (test_outputs['gt_split_map'][0].detach().cpu().squeeze(
+                0) > 0.5).float().numpy() if 'gt_split_map' in test_outputs else None
+            gt_seg_head_map = (test_outputs['gt_seg_head_map'][0].detach().cpu().squeeze(
+                0)).float().numpy() if 'gt_seg_head_map' in test_outputs else None
+            pred_split_map = (test_outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            pred_seg_head_map = (test_outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
             visualization(samples, targets, [points], vis_dir,
                           gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
                           pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
+
+            # points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
+            # gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
+            # gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
+            # pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            # pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            # visualization(samples, targets, [points], vis_dir,
+            #               gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
+            #               pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     results['mse'] = np.sqrt(results['mse'])
     return results
+
+
+
+
+def split_test_batch(max_batch, samples):
+
+    total_num = samples.tensors.shape[0]
+    last_batch_num = total_num % max_batch
+    group_num = total_num // max_batch
+    size_list = [max_batch for _ in range(group_num)]
+    if last_batch_num > 0:
+        size_list.append(last_batch_num)
+
+    def split_nest_tensor(nested_tensor):
+        samples_tensors_list = torch.split(samples.tensors, size_list, dim=0)
+        samples_masks_list = torch.split(samples.mask, size_list, dim=0)
+        res = []
+        for tensors, mask in zip(samples_tensors_list, samples_masks_list):
+            res.append(NestedTensor(tensors, mask))
+        return res
+
+    split_samples_result = split_nest_tensor(samples)
+    # split_features_result = []
+    # for fea_4x, fea_8x in zip(split_nest_tensor(features['4x']), split_nest_tensor(features['8x'])):
+    #     split_features_result.append({'4x': fea_4x, '8x': fea_8x})
+    #
+    # split_pos_result = []
+    # for pos_4x, pos_8x in zip(split_nest_tensor(features['4x']), split_nest_tensor(features['8x'])):
+    #     split_features_result.append({'4x': fea_4x, '8x': fea_8x})
+    #
+    # dense_input_embed_result = kwargs['dense_input_embed']
+
+    return split_samples_result #, split_features_result, dense_input_embed_result
+
+
+def merge_dicts(list_of_dicts):
+    if not list_of_dicts:
+        return {}
+
+    # 获取第一个字典的键，假设所有字典的键相同
+    example_dict = list_of_dicts[0]
+    merged_dict = {key: [] for key in example_dict.keys()}
+
+    # 遍历列表，收集每个键对应的张量
+    for d in list_of_dicts:
+        for key, tensor in d.items():
+            merged_dict[key].append(tensor)
+
+    # 将列表中的张量堆叠起来
+    for key in merged_dict.keys():
+        if "pred_" in key and "map" not in key:
+            merged_dict[key] = torch.cat(merged_dict[key], dim=1)
+
+    return merged_dict

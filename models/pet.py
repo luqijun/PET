@@ -41,7 +41,7 @@ class PET(nn.Module):
         self.encode_feats = '8x'
         enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
         args.enc_layers = len(enc_win_list)
-        encoder, decoder = build_deformable_detr([args.hidden_dim, args.hidden_dim], num_feature_levels=2, two_stage=True) # build_encoder(args, enc_win_list=enc_win_list)
+        encoder, decoder = build_deformable_detr([args.hidden_dim, args.hidden_dim], num_feature_levels=2, two_stage=False) # build_encoder(args, enc_win_list=enc_win_list)
         self.encoder = encoder
 
         # segmentation
@@ -85,16 +85,12 @@ class PET(nn.Module):
         # backbone
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
+
         features, pos = self.backbone(samples)
 
         # positional embedding
         dense_input_embed = self.pos_embed(samples)
         kwargs['dense_input_embed'] = dense_input_embed
-
-        # depth embedding
-        depth_embed = torch.cat([pos2posemb1d(tgt['depth']) for tgt in kwargs['targets']])
-        #kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
-        kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
 
         features['4x'] = NestedTensor(features['4x'].tensors, features['4x'].mask)
         features['8x'] = NestedTensor(features['8x'].tensors, features['8x'].mask)
@@ -110,23 +106,37 @@ class PET(nn.Module):
         return out
 
     def test_forward(self, samples, features, pos, **kwargs):
-        thrs = 0.5  # inference threshold
+
         outputs = self.pet_forward(samples, features, pos, **kwargs)
+        return self.test_forward_process(outputs, self.split_depth_th, **kwargs)
+
+    @staticmethod
+    def test_forward_process(outputs, split_depth_th, **kwargs):
+
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
 
+        thrs = 0.5  # inference threshold
         # process sparse point queries
         if outputs['sparse'] is not None:
+            fea_shape = out_sparse['fea_shape']
+            split_map_sparse = outputs['split_map_sparse']
+            split_mask = split_map_sparse > 0.5
+
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
             valid_sparse = out_sparse_scores > thrs
-            index_sparse = valid_sparse.cpu()
+            index_sparse = valid_sparse.cpu() & split_mask.cpu()
         else:
             index_sparse = None
 
         # process dense point queries
         if outputs['dense'] is not None:
+            fea_shape = out_dense['fea_shape']
+            split_map_dense = outputs['split_map_dense']
+            split_mask = split_map_dense > 0.5
+
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
             valid_dense = out_dense_scores > thrs
-            index_dense = valid_dense.cpu()
+            index_dense = valid_dense.cpu() * split_mask.cpu()
         else:
             index_dense = None
 
@@ -145,11 +155,20 @@ class PET(nn.Module):
             else:
                 div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
 
-        gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > self.split_depth_th).long()
+        gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > split_depth_th).long()
         div_out['gt_split_map'] = gt_split_map
         div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'],
+                                                     size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+
+        if index_sparse != None and index_dense !=None:
+            div_out['pred_points_first'] = torch.cat(
+                            [out_sparse['pred_points'][0][index_sparse[0]].unsqueeze(0), out_dense['pred_points'][0][index_dense[0]].unsqueeze(0)], dim=1)
+        elif index_sparse != None:
+            div_out['pred_points_first'] = out_sparse['pred_points'][0][index_sparse[0]].unsqueeze(0)
+        else:
+            div_out['pred_points_first'] = out_dense['pred_points'][0][index_dense[0]].unsqueeze(0)
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -158,7 +177,7 @@ class PET(nn.Module):
         # compute loss
         criterion, targets, epoch = kwargs['criterion'], kwargs['targets'], kwargs['epoch']
         losses = self.compute_loss(outputs, criterion, targets, epoch, samples)
-        return losses
+        return losses, outputs
 
     def pet_forward(self, samples, features, pos, **kwargs):
 
@@ -197,10 +216,11 @@ class PET(nn.Module):
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
-            split_map_sparse = outputs_sparse['div_new']
+            outputs_sparse['fea_shape'] = features['8x'].tensors.shape[-2:]
+            # split_map_sparse = outputs_sparse['div_new']
         else:
             outputs_sparse = None
-        
+
         # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
             # level embeding
@@ -208,7 +228,8 @@ class PET(nn.Module):
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
-            split_map_dense = outputs_dense['div_new']
+            outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
+            # split_map_dense = outputs_dense['div_new']
         else:
             outputs_dense = None
         

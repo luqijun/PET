@@ -124,24 +124,30 @@ class PETDecoder(nn.Module):
             outputs['enc_outputs']['pq_stride'] = self.pq_stride
         else:
 
+            # 处理memory
+            # fea_idx = 1
+            # h, w = spatial_shapes[fea_idx]
+            # start_idx = level_start_index[fea_idx]
+            # memory = memory[:, start_idx: start_idx + h * w]
+            # mask_flatten = mask_flatten[:, start_idx: start_idx + h * w]
+            # spatial_shapes = spatial_shapes[fea_idx:fea_idx + 1]
+            # level_start_index = level_start_index[0:1]
+            # valid_ratios = valid_ratios[:, 1:, :]
+
             # get points queries for transformer
-            query_embed, points_queries, query_feats, v_idx, depth_embed = self.get_point_query(samples, features,
+            query_embed, points_queries, query_feats, v_idx = self.get_point_query(samples, features,
                                                                                                 **kwargs)
 
             B = samples.tensors.shape[0]
             img_h, img_w = samples.tensors.shape[-2:]
             points_queries = points_queries.float().to(query_feats.device)
-            points_queries = torch.flip(points_queries, dims=[-1])
             points_queries[:, 0] /= img_h
             points_queries[:, 1] /= img_w
+            points_queries = torch.flip(points_queries, dims=[-1])   # flip  (h, w) -> (w, h)
             points_queries = points_queries.unsqueeze(0).expand(B, -1, -1)
 
-            if 'train' in kwargs:
-                query_feats = query_feats.flatten(2).permute(0, 2, 1)
-            else:
-                query_feats = query_feats.permute(1, 0, 2)
+            query_feats = query_feats.flatten(2).permute(0, 2, 1)
             query_embed = query_embed.permute(1, 0, 2)
-
 
 
         hs, inter_references_out = \
@@ -215,21 +221,25 @@ class PETDecoder(nn.Module):
         """
         src, _ = features[self.feat_name].decompose()
 
-        # generate points queries and position embedding
-        if 'train' in kwargs:
-            query_embed, points_queries, query_feats, depth_embed = self.points_queris_embed(samples, self.pq_stride,
-                                                                                             src, **kwargs)
-            query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
-            depth_embed = depth_embed.flatten(2).permute(2, 0, 1)
-            v_idx = None
-        else:
-            query_embed, points_queries, query_feats, v_idx, depth_embed = self.points_queris_embed_inference(samples,
-                                                                                                              self.pq_stride,
-                                                                                                              src,
-                                                                                                              **kwargs)
-            points_queries = points_queries.squeeze(1)
+        query_embed, points_queries, query_feats = self.points_queris_embed(samples, self.pq_stride,
+                                                                            src, **kwargs)
+        query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
+        v_idx = None
 
-        out = (query_embed, points_queries, query_feats, v_idx, depth_embed)
+        # generate points queries and position embedding
+        # if 'train' in kwargs:
+        #     query_embed, points_queries, query_feats = self.points_queris_embed(samples, self.pq_stride,
+        #                                                                                      src, **kwargs)
+        #     query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
+        #     v_idx = None
+        # else:
+        #     query_embed, points_queries, query_feats, v_idx = self.points_queris_embed_inference(samples,
+        #                                                                                                   self.pq_stride,
+        #                                                                                                   src,
+        #                                                                                                   **kwargs)
+        #     points_queries = points_queries.squeeze(1)
+
+        out = (query_embed, points_queries, query_feats, v_idx)
         return out
 
     def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
@@ -237,7 +247,6 @@ class PETDecoder(nn.Module):
         Generate point query embedding during training
         """
         # dense position encoding at every pixel location
-        depth_input_embed = kwargs['depth_input_embed'] # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
         
         if 'level_embed' in kwargs:
@@ -268,19 +277,14 @@ class PETDecoder(nn.Module):
         query_feats = src[:, :, shift_y_down,shift_x_down]
         query_feats = query_feats.view(bs, c, h, w)
 
-        # depth_embed
-        depth_embed = depth_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
-        bs, c = depth_embed.shape[:2]
-        depth_embed = depth_embed.view(bs, c, h, w)
 
-        return query_embed, points_queries, query_feats, depth_embed
+        return query_embed, points_queries, query_feats
     
     def points_queris_embed_inference(self, samples, stride=8, src=None, **kwargs):
         """
         Generate point query embedding during inference
         """
         # dense position encoding at every pixel location
-        depth_input_embed = kwargs['depth_input_embed']  # B, C, H, W
         dense_input_embed = kwargs['dense_input_embed']
         
         if 'level_embed' in kwargs:
@@ -303,7 +307,6 @@ class PETDecoder(nn.Module):
 
         # get points queries embedding 
         query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
-        depth_embed = depth_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
         bs, c = query_embed.shape[:2]
 
         # get points queries features, equivalent to nearest interpolation
@@ -312,21 +315,19 @@ class PETDecoder(nn.Module):
         
         # window-rize
         query_embed = query_embed.reshape(bs, c, h, w)
-        depth_embed = depth_embed.reshape(bs, c, h, w)
         points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
         query_feats = query_feats.reshape(bs, c, h, w)
         points_queries = points_queries.to(query_feats.device)
 
         div = kwargs['div']
         thrs = 0.5
-        valid_div = (div > thrs).flatten()
+        valid_div = (div > thrs).flatten(1)
 
         query_embed = query_embed.flatten(2)[..., valid_div].permute(2, 0, 1)
-        depth_embed = depth_embed.flatten(2)[..., valid_div].permute(2, 0, 1)
         points_queries = points_queries.flatten(2)[..., valid_div].permute(2, 0, 1)
         query_feats = query_feats.flatten(2)[..., valid_div].permute(2, 0, 1)
     
-        return query_embed, points_queries, query_feats, None, depth_embed
+        return query_embed, points_queries, query_feats, None
 
     def predict(self, samples, points_queries, hs, **kwargs):
         """
@@ -340,16 +341,15 @@ class PETDecoder(nn.Module):
             outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
 
             # normalize point-query coordinates
-            points_queries = points_queries.float().cuda()
-            points_queries[:, 0] /= img_h
-            points_queries[:, 1] /= img_w
-
+            points_queries = points_queries.float().cuda().clone()
+            # points_queries = torch.flip(points_queries, dims=[-1]) # flip  (w, h) -> (h, w)
             # rescale offset range during testing
-            if 'test' in kwargs:
-                outputs_offsets[..., 0] /= (img_h / 256)
-                outputs_offsets[..., 1] /= (img_w / 256)
+            # if 'test' in kwargs:
+            #     outputs_offsets[..., 0] /= (img_h / 256)
+            #     outputs_offsets[..., 1] /= (outputs_points / 256)
 
             outputs_points = outputs_offsets[-1] + points_queries
+            outputs_points = torch.flip(outputs_points, dims=[-1]) # flip  (w, h) -> (h, w)
         else:
             outputs_class = self.class_embed(hs)
             points_queries = inverse_sigmoid(points_queries)  # inverse sigmoid
