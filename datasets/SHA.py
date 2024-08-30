@@ -29,9 +29,10 @@ class SHA(Dataset):
             self.gt_list[img_path] = {}
             self.gt_list[img_path]['points'] = gt_path.replace("jpg", "mat")
             self.gt_list[img_path]['depth_map'] = os.path.join(data_root, prefix, f'images_depth', img_name)
+            self.gt_list[img_path]['points_head_sizes'] = os.path.join(data_root, prefix, f'depth_head_sizes', img_name.replace('.jpg', '.txt'))
 
-            img_id = img_name.split('_')[1].split('.')[0]
-            self.gt_list[img_path]['seg_map'] = os.path.join(data_root, prefix, f'pmap', f'PMAP_{img_id}.mat')
+            # img_id = img_name.split('_')[1].split('.')[0]
+            # self.gt_list[img_path]['seg_map'] = os.path.join(data_root, prefix, f'pmap', f'PMAP_{img_id}.mat')
 
         self.img_list = sorted(list(self.gt_list.keys()))
         self.nSamples = len(self.img_list)
@@ -64,19 +65,18 @@ class SHA(Dataset):
         # load image and gt points
         img_path = self.img_list[index]
         gt_path = self.gt_list[img_path]['points']
-        img_seg_path = self.gt_list[img_path]['seg_map']
         img_depth_path = self.gt_list[img_path]['depth_map']
         img, img_depth, points = load_data((img_path, img_depth_path, gt_path), self.train)
         points = points.astype(float)
 
-        # image segmentation map
-        img_seg = io.loadmat(img_seg_path)['pmap']
+        # points head sizes
+        img_head_sizes_path = self.gt_list[img_path]['points_head_sizes']
+        points_head_sizes = np.loadtxt(img_head_sizes_path)
 
         # image transform
         if self.transform is not None:
             img = self.transform(img)
             img_depth = self.pil_to_tensor(img_depth)
-            img_seg = self.pil_to_tensor(img_seg)
 
         img = torch.Tensor(img)
         # random scale
@@ -90,33 +90,34 @@ class SHA(Dataset):
             if scale * min_size > self.patch_size:  
                 img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
                 img_depth = torch.nn.functional.interpolate(img_depth.unsqueeze(0), scale_factor=scale).squeeze(0)
-                img_seg = torch.nn.functional.interpolate(img_seg.unsqueeze(0), scale_factor=scale).squeeze(0)
                 points *= scale
+                points_head_sizes *= scale
 
             # random crop patch
-            img, img_depth, img_seg, points = random_crop(img, img_depth, img_seg, points, patch_size=self.patch_size)
+            img, img_depth, points, points_head_sizes = random_crop(img, img_depth, points, points_head_sizes, patch_size=self.patch_size)
 
             # random flip
             if random.random() > 0.5 and self.flip:
                 img = torch.flip(img, dims=[2])
                 img_depth = torch.flip(img_depth, dims=[2])
-                img_seg = torch.flip(img_seg, dims=[2])
                 points[:, 1] = self.patch_size - points[:, 1]
 
         # target
         target = {}
         points = torch.Tensor(points)
+        points_head_sizes = torch.from_numpy(points_head_sizes)
         target['points'] = points
         target['labels'] = torch.ones([points.shape[0]]).long()
 
         # depth info
         h, w = img_depth.shape[-2:]
-        h_coords = torch.clamp(points[:, 0].long(), min=0, max=h - 1)
-        w_coords = torch.clamp(points[:, 1].long(), min=0, max=w - 1)
-        depth = img_depth[:, h_coords, w_coords]
+        # h_coords = torch.clamp(points[:, 0].long(), min=0, max=h - 1)
+        # w_coords = torch.clamp(points[:, 1].long(), min=0, max=w - 1)
+        # depth = img_depth[:, h_coords, w_coords]
+        depth = (points_head_sizes / scale / 60).unsqueeze(0)
         target['depth'] = img_depth
-        target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
-        target['seg_map'] = img_seg.squeeze(0) # self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
+        target['depth_weight'] = self.cal_depth_weight(depth, list(np.arange(0.01, 0.1, 0.01))) # [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]
+        target['seg_map'] = self.get_seg_map(points, points_head_sizes, img_depth.shape[-2:])
         target['label_map'] = self.get_label_map(points, img_depth.shape[-2:])
 
         # save
@@ -151,15 +152,13 @@ class SHA(Dataset):
             result[mask] = values[i]  # 根据掩码赋值
         return result
 
-    def get_seg_map(self, points, depth, shape, scale):
+    def get_seg_map(self, points, points_head_sizes, shape):
 
         H, W = shape
         result = torch.zeros(shape)
-        for point, d_p in zip(points, depth.squeeze(0)):
+        for point, head_size in zip(points, points_head_sizes):
             point = point.round() - 1
             y, x = point
-            head_size = 60 * d_p * scale
-            head_size = max(head_size, 4)
             y1 = torch.clamp(y - head_size // 2, max=H, min=0).long()
             y2 = torch.clamp(y + head_size // 2, max=H, min=0).long()
             x1 = torch.clamp(x - head_size // 2, max=W, min=0).long()
@@ -190,7 +189,7 @@ def load_data(img_gt_path, train):
     return img, img_depth, points
 
 
-def random_crop(img, img_depth, img_seg, points, patch_size=256):
+def random_crop(img, img_depth, points, points_head_sizes, patch_size=256):
     patch_h = patch_size
     patch_w = patch_size
     
@@ -204,20 +203,21 @@ def random_crop(img, img_depth, img_seg, points, patch_size=256):
     # clip image and points
     result_img = img[:, start_h:end_h, start_w:end_w]
     result_img_depth = img_depth[:, start_h:end_h, start_w:end_w]
-    result_img_seg = img_seg[:, start_h:end_h, start_w:end_w]
+
     result_points = points[idx]
     result_points[:, 0] -= start_h
     result_points[:, 1] -= start_w
+
+    result_points_head_sizes = points_head_sizes[idx]
     
     # resize to patchsize
     imgH, imgW = result_img.shape[-2:]
     fH, fW = patch_h/imgH, patch_w/imgW
     result_img = torch.nn.functional.interpolate(result_img.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
     result_img_depth = torch.nn.functional.interpolate(result_img_depth.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
-    result_img_seg = torch.nn.functional.interpolate(result_img_seg.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
     result_points[:, 0] *= fH
     result_points[:, 1] *= fW
-    return result_img, result_img_depth, result_img_seg, result_points
+    return result_img, result_img_depth, result_points, result_points_head_sizes
 
 
 def build(image_set, args):
