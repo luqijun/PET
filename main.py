@@ -56,6 +56,11 @@ def main(args):
             config.merge_from_dict(args.cfg_options)
         args = merge_config(config, args)
 
+    formatted_params = "Parameters:\n"
+    for key, value in args.items():
+        formatted_params += "  {}: {}\n".format(key, value)
+    print(formatted_params)
+
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -115,7 +120,7 @@ def main(args):
         run_log_name = os.path.join(output_dir, 'run_log.txt')
         with open(run_log_name, "a") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
-            log_file.write("{}".format(args))
+            log_file.write("{}".format(formatted_params))
             log_file.write("parameters: {}".format(n_parameters))
 
     # resume
