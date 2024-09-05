@@ -3,29 +3,28 @@ import re
 import shutil
 import os
 import argparse
+from mmengine.config import Config
 
 def main():
     # 创建 ArgumentParser 对象
     parser = argparse.ArgumentParser(description='Process some parameters.')
 
     # 添加参数
+    parser.add_argument('cfg', default=None, type=str)
     parser.add_argument('--total_times', type=int, default=15, help='The first parameter')
     parser.add_argument('--sh_script', type=str, default='./train_one_time.sh', help='The second parameter')
-    parser.add_argument('--epochs', type=int, default=500, help='')
-    parser.add_argument('--eval_start', type=int, default=100, help='')
-    parser.add_argument('--dataset_file', type=str, default='SHA', help='')
     parser.add_argument('--output_dir', type=str, default='pet_model_ntimes', help='')
     parser.add_argument('--result_dir', type=str, default='pet_model_ntimes_save', help='')
 
     # 解析参数
     args = parser.parse_args()
+    assert args.cfg is not None
 
     # 配置参数
     N = args.total_times  # 循环次数
     sh_script = args.sh_script  # 你的sh脚本路径
-    epochs = args.epochs
-    eval_start = args.eval_start
-    dataset_file = args.dataset_file
+    cfg = args.cfg
+    dataset_file = Config.fromfile(cfg).dataset_file
     output_dir = f'outputs/{dataset_file}/{args.output_dir}' # 输出目录
     result_dir = f'outputs/{dataset_file}/{args.result_dir}' # 结果目录
 
@@ -41,7 +40,7 @@ def main():
         print(f'Executing iteration {i + 1}...')
 
         # 执行sh脚本并重定向输出到当前控制台
-        process = subprocess.Popen(['bash', sh_script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(['bash', sh_script, cfg], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
         # 读取输出并提取“best mae”和“best mse”
         mae = 0

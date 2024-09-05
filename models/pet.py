@@ -9,7 +9,6 @@ from torch.nn.init import normal_
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
 
-from .loss import build_criterion
 from .pet_decoder import PETDecoder
 from .backbones import *
 from .transformer import *
@@ -145,9 +144,9 @@ class PET(nn.Module):
 
         gt_split_map = 1 - (torch.cat([tgt['depth'] for tgt in kwargs['targets']], dim=0) > self.split_depth_th).long()
         div_out['gt_split_map'] = gt_split_map
-        div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
-        div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
+        # div_out['gt_seg_head_map'] = torch.cat([tgt['seg_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
+        # div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
 
     def train_forward(self, samples, features, pos, **kwargs):
@@ -164,8 +163,10 @@ class PET(nn.Module):
         # apply seg head
         seg_map = self.seg_head(fea_x8)
         seg_attention = seg_map.sigmoid()
-        for fea in features.values():
-            fea.tensors = fea.tensors * F.interpolate(seg_attention, size=fea.tensors.shape[-2:])
+        pred_seg_map_4x = F.interpolate(seg_attention, size=features['4x'].tensors.shape[-2:])
+        pred_seg_map_8x = F.interpolate(seg_attention, size=features['8x'].tensors.shape[-2:])
+        features['4x'].tensors = features['4x'].tensors * pred_seg_map_4x
+        features['8x'].tensors = features['8x'].tensors * pred_seg_map_8x
 
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -190,6 +191,8 @@ class PET(nn.Module):
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+            # outputs_sparse['pred_seg_map'] = pred_seg_map_8x
+            outputs_sparse['fea_shape'] = pred_seg_map_8x.shape[-2:]
         else:
             outputs_sparse = None
         
@@ -200,6 +203,8 @@ class PET(nn.Module):
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            # outputs_dense['pred_seg_map'] = pred_seg_map_4x
+            outputs_dense['fea_shape'] = pred_seg_map_4x.shape[-2:]
         else:
             outputs_dense = None
         
@@ -256,10 +261,13 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_dense)
         
         # seg head loss
-        seg_map = outputs['seg_map']
+        pred_seg_map = outputs['seg_map']
         gt_seg_map = torch.stack([tgt['seg_map'] for tgt in targets], dim=0)
-        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=seg_map.shape[-2:]).squeeze(1)
-        loss_seg_map = self.bce_loss(seg_map.float().squeeze(1), gt_seg_map)
+
+        # resize seg map
+        gt_seg_map = F.interpolate(gt_seg_map.unsqueeze(1), size=pred_seg_map.shape[-2:]).squeeze(1)
+        # pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
+        loss_seg_map = self.bce_loss(pred_seg_map.float().squeeze(1), gt_seg_map)
         losses += loss_seg_map * 0.1
         loss_dict['loss_seg_map'] = loss_seg_map * 0.1
 
@@ -307,20 +315,11 @@ class PET(nn.Module):
         return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
 
 
-def build_pet(args):
-    device = torch.device(args.device)
-
+def build_pet(args, backbone, num_classes):
     # build model
-    num_classes = 1
-    args.num_classes = num_classes
-    backbone = build_backbone_vgg(args)
     model = PET(
         backbone,
         num_classes=num_classes,
         args=args,
     )
-
-    # build loss criterion
-    criterion = build_criterion(args)
-    criterion.to(device)
-    return model, criterion
+    return model

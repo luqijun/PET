@@ -18,76 +18,44 @@ from datasets import build_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
 
+from mmengine.config import Config, DictAction
+
+# 合并配置，以 config 配置为主
+def merge_config(config, args):
+    for key, value in vars(args).items():
+        if key in config:
+            continue
+        config[key] = value
+    return config
+
 def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
 
-    # training Parameters
-    parser.add_argument('--lr', default=1e-4, type=float)
-    parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=1500, type=int)
-    parser.add_argument('--clip_max_norm', default=0.1, type=float,
-                        help='gradient clipping max norm')
-
-    # model parameters
-    # - backbone
-    parser.add_argument('--backbone', default='vgg16_bn', type=str,
-                        help="Name of the convolutional backbone to use")
-    parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
-                        help="Type of positional embedding to use on top of the image features")
-    # - transformer
-    parser.add_argument('--dec_layers', default=2, type=int,
-                        help="Number of decoding layers in the transformer")
-    parser.add_argument('--dim_feedforward', default=512, type=int,
-                        help="Intermediate size of the feedforward layers in the transformer blocks")
-    parser.add_argument('--hidden_dim', default=256, type=int,
-                        help="Size of the embeddings (dimension of the transformer)")
-    parser.add_argument('--dropout', default=0.0, type=float,
-                        help="Dropout applied in the transformer")
-    parser.add_argument('--nheads', default=8, type=int,
-                        help="Number of attention heads inside the transformer's attentions")
-
-    # loss parameters
-    # - matcher
-    parser.add_argument('--set_cost_class', default=1, type=float,
-                        help="Class coefficient in the matching cost")
-    parser.add_argument('--set_cost_point', default=0.05, type=float,
-                        help="SmoothL1 point coefficient in the matching cost")
-    # - loss coefficients
-    parser.add_argument('--ce_loss_coef', default=1.0, type=float)
-    parser.add_argument('--point_loss_coef', default=5.0, type=float)
-    parser.add_argument('--eos_coef', default=0.5, type=float,
-                        help="Relative classification weight of the no-object class")
-
-    # dataset parameters
-    parser.add_argument('--dataset_file', default="SHA")
-    parser.add_argument('--data_path', default="./data/ShanghaiTech/PartA", type=str)
-
-    # misc parameters
-    parser.add_argument('--output_dir', default='',
-                        help='path where to save, empty for no saving')
-    parser.add_argument('--device', default='cuda',
-                        help='device to use for training / testing')
-    parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
-                        help='start epoch')
-    parser.add_argument('--num_workers', default=2, type=int)
-    parser.add_argument('--eval_start', default=350, type=int)
-    parser.add_argument('--eval_freq', default=1, type=int)
-    parser.add_argument('--syn_bn', default=0, type=int)
-
-    # distributed training parameters
-    parser.add_argument('--world_size', default=1, type=int,
-                        help='number of distributed processes')
+    # config file
+    parser.add_argument('--cfg', default=None, type=str)
+    parser.add_argument(
+        '--cfg-options',
+        nargs='+',
+        action=DictAction,
+        help='override some settings in the used config, the key-value pair '
+             'in xxx=yyy format will be merged into config file. If the value to '
+             'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
+             'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
+             'Note that the quotation marks are necessary and that no white space '
+             'is allowed.')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     return parser
 
 
 def main(args):
     utils.init_distributed_mode(args)
-    print(args)
+
+    if args.cfg:
+        config =  Config.fromfile(args.cfg)
+        if args.cfg_options is not None:
+            config.merge_from_dict(args.cfg_options)
+        args = merge_config(config, args)
+
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -151,6 +119,7 @@ def main(args):
             log_file.write("parameters: {}".format(n_parameters))
 
     # resume
+    start_epoch = 0
     best_mae, best_epoch = 1e8, 0
     best_mse, best_mse_epoch = 1e8, 0
     if args.resume:
@@ -163,7 +132,7 @@ def main(args):
         if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            args.start_epoch = checkpoint['epoch'] + 1
+            start_epoch = checkpoint['epoch'] + 1
             best_mae = checkpoint.get('best_mae', 0.0)
             best_epoch = checkpoint.get('best_epoch', 0)
             best_mse = checkpoint.get('best_mse', 0.0)
@@ -172,12 +141,12 @@ def main(args):
     # training
     print("Start training")
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         
         t1 = time.time()
-        train_stats = train_one_epoch(
+        train_stats = train_one_epoch(args,
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm)
         t2 = time.time()
