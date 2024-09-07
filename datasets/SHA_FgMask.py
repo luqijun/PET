@@ -120,8 +120,8 @@ class SHA(Dataset):
         h_coords = torch.clamp(points[:, 0].long(), min=0, max=h - 1)
         w_coords = torch.clamp(points[:, 1].long(), min=0, max=w - 1)
         depth = img_depth[:, h_coords, w_coords]
-        target['depth'] = img_depth
-        target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
+        target['seg_level_map'] = img_depth
+        target['match_point_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
         target['label_map'] = self.get_label_map(points, img_depth.shape[-2:])
         if self.train:
             # fg_map = self.get_seg_map_by_label_map(target['label_map'], 32, 32)
@@ -134,7 +134,7 @@ class SHA(Dataset):
             # target['seg_map'] = target['fg_map']
 
             target['fg_map'] = self.get_seg_map_by_label_map(target['label_map'], 32, 32)
-            target['seg_map'] = target['fg_map'] # self.get_seg_map_by_label_map(target['label_map'], 32, 32)  # img_seg.squeeze(0) # self.get_seg_map_by_depth(points, depth, img_depth.shape[-2:], scale)
+            target['seg_head_map'] = target['fg_map'] # self.get_seg_map_by_label_map(target['label_map'], 32, 32)  # img_seg.squeeze(0) # self.get_seg_map_by_depth(points, depth, img_depth.shape[-2:], scale)
 
         # save
         # save_tensor_to_image(target['seg_map'], '/mnt/c/Users/lqjun/Desktop/test.png')

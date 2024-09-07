@@ -108,9 +108,9 @@ def main(args):
         sampler_train, args.batch_size, drop_last=True)
 
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                collate_fn=utils.collate_fn, num_workers=args.num_workers, pin_memory=True)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers, pin_memory=True)
 
     # output directory and log 
     if utils.is_main_process:
@@ -120,6 +120,7 @@ def main(args):
         run_log_name = os.path.join(output_dir, 'run_log.txt')
         with open(run_log_name, "a") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
+            log_file.write(f"config file: {args.cfg}")
             log_file.write("{}".format(formatted_params))
             log_file.write("parameters: {}".format(n_parameters))
 

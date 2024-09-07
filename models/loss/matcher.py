@@ -4,6 +4,7 @@ Modules to compute bipartite matching
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
+from .utils import split_and_compute_cdist
 
 class HungarianMatcher(nn.Module):
     """
@@ -51,7 +52,7 @@ class HungarianMatcher(nn.Module):
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets])
-        depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1)
+        match_point_weights = torch.cat([v["match_point_weight"] for v in targets], dim=1)
 
         # compute the classification cost, i.e., - prob[target class]
         cost_class = -out_prob[:, tgt_ids]
@@ -61,10 +62,11 @@ class HungarianMatcher(nn.Module):
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
-        cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+        cost_point = split_and_compute_cdist(out_points_abs, tgt_points, n=bs, p=2)
+        # cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix
-        C = cost_point * depth_weights + self.cost_class * cost_class
+        C = cost_point * match_point_weights + self.cost_class * cost_class
         # C = cost_point * self.cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 

@@ -254,12 +254,12 @@ def collate_fn(batch):
     batch[0] = nested_tensor_from_tensor_list(batch[0])
     img_shape = batch[0].tensors.shape[-2:]
     for tgt in batch[1]:
-        if tgt['depth'].shape[-2:] != img_shape:
-            pad_w = img_shape[1] - tgt['depth'].shape[-1]
-            pad_h = img_shape[0] - tgt['depth'].shape[-2]
+        if tgt['seg_level_map'].shape[-2:] != img_shape:
+            pad_w = img_shape[1] - tgt['seg_level_map'].shape[-1]
+            pad_h = img_shape[0] - tgt['seg_level_map'].shape[-2]
 
             # depth pad
-            tgt['depth'] = torch.nn.functional.pad(tgt['depth'], (0, pad_w, 0, pad_h))
+            tgt['seg_level_map'] = torch.nn.functional.pad(tgt['seg_level_map'], (0, pad_w, 0, pad_h))
 
         # depth level
         # img_depth = tgt['depth']

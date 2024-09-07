@@ -9,6 +9,7 @@ import glob
 import scipy.io as io
 import torchvision.transforms as standard_transforms
 from util.misc import save_tensor_to_image
+from .utils import compute_density
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -41,19 +42,6 @@ class SHA(Dataset):
         self.train = train
         self.flip = flip
         self.patch_size = 256
-    
-    def compute_density(self, points):
-        """
-        Compute crowd density:
-            - defined as the average nearest distance between ground-truth points
-        """
-        points_tensor = points
-        dist = torch.cdist(points_tensor, points_tensor, p=2)
-        if points_tensor.shape[0] > 1:
-            density = dist.sort(dim=1)[0][:,1].mean().reshape(-1)
-        else:
-            density = torch.tensor(999.0).reshape(-1)
-        return density
 
     def __len__(self):
         return self.nSamples
@@ -114,9 +102,9 @@ class SHA(Dataset):
         h_coords = torch.clamp(points[:, 0].long(), min=0, max=h - 1)
         w_coords = torch.clamp(points[:, 1].long(), min=0, max=w - 1)
         depth = img_depth[:, h_coords, w_coords]
-        target['depth'] = img_depth
-        target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
-        target['seg_map'] = img_seg.squeeze(0) # self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
+        target['seg_level_map'] = img_depth
+        target['seg_head_map'] = img_seg.squeeze(0) # self.get_seg_map(points, depth, img_depth.shape[-2:], scale)
+        target['match_point_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
         target['label_map'] = self.get_label_map(points, img_depth.shape[-2:])
 
         # save
@@ -124,7 +112,7 @@ class SHA(Dataset):
         # save_tensor_to_image(img, '/mnt/c/Users/lqjun/Desktop/test1.png')
 
         if self.train:
-            density = self.compute_density(points)
+            density = compute_density(points)
             target['density'] = density
         else: # test
             target['image_path'] = img_path

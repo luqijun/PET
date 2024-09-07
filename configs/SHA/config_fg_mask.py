@@ -14,7 +14,7 @@ clip_max_norm=0.1
 
 # train
 lr=0.0001
-epochs=5000
+epochs=500
 batch_size=8
 eval_start=100
 eval_freq=1
@@ -42,3 +42,4 @@ eos_coef=0.5
 dataset_file="SHA_FgMask"
 data_path="./data/ShanghaiTech/part_A/"
 output_dir="pet_model"
+seg_level_split_th = 0.4

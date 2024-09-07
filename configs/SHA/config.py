@@ -42,3 +42,4 @@ eos_coef=0.5
 dataset_file="SHA"
 data_path="./data/ShanghaiTech/part_A/"
 output_dir="pet_model"
+seg_level_split_th = 0.4
