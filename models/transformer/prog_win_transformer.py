@@ -34,7 +34,7 @@ class WinEncoderTransformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
     
-    def forward(self, src, pos_embed, mask):
+    def forward(self, src, pos_embed, mask, **kwargs):
         bs, c, h, w = src.shape
         
         memeory_list = []
@@ -45,7 +45,7 @@ class WinEncoderTransformer(nn.Module):
             memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory, pos_embed, mask, enc_win_h, enc_win_w)            
 
             # encoder forward
-            output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx)
+            output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx, **kwargs)
 
             # reverse encoder window
             memeory = enc_win_partition_reverse(output, enc_win_h, enc_win_w, h, w)
@@ -86,7 +86,7 @@ class WinDecoderTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
     
     def decoder_forward(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
-                        depth_embed, **kwargs):
+                         **kwargs):
         """ 
         decoder forward during training
         """
@@ -97,12 +97,6 @@ class WinDecoderTransformer(nn.Module):
         query_embed_ = query_embed.permute(1,2,0).reshape(bs, c, qH, qW)
         query_embed_win = window_partition(query_embed_, window_size_h=dec_win_h, window_size_w=dec_win_w)
         tgt = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        depth_embed_ = depth_embed.permute(1,2,0).reshape(bs, c, qH, qW)
-        depth_embed_win = window_partition(depth_embed_, window_size_h=dec_win_h, window_size_w=dec_win_w)
-
-        # depth attention
-        # tgt += depth_embed_win
-        # tgt = self.cross_attn_depth(tgt + query_embed_win, depth_embed_win + query_embed_win, depth_embed_win)[0]
 
         # decoder attention
         hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
@@ -112,21 +106,42 @@ class WinDecoderTransformer(nn.Module):
         return hs
     
     def decoder_forward_dynamic(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
-                                depth_embed, **kwargs):
+                                 **kwargs):
         """ 
         decoder forward during inference
         """       
         # decoder attention
         tgt = query_feats
 
-        # depth attention
-        # tgt += depth_embed
-        # tgt = self.cross_attn_depth(tgt + query_embed, depth_embed + query_embed, depth_embed)[0]
+        bs = tgt.shape[1]
+        group_num = 128 # 32 if tgt.shape[0]==32 else 128
+        if bs <= group_num:
+            final_hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
+                                  query_pos=query_embed, **kwargs)
+        else:
+            num_groups = bs // group_num
+            num_left = bs % group_num
+            group_sizes = [group_num] * num_groups
+            if num_left > 0:
+                group_sizes.append(num_left)
 
-        hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
-                                                                        query_pos=query_embed, **kwargs)
-        num_layer, num_elm, num_win, dim = hs_win.shape
-        hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
+            tgt_split = torch.split(tgt, group_sizes, dim=1)
+            memory_win_split = torch.split(memory_win, group_sizes, dim=1)
+            mask_win_split = torch.split(mask_win, group_sizes, dim=0)
+            pos_embed_win_split = torch.split(pos_embed_win, group_sizes, dim=1)
+            query_embed_split = torch.split(query_embed, group_sizes, dim=1)
+            final_hs_win = []
+            for one_tgt, one_memory_win, one_mask_win, one_pos_embed_win, one_query_embed in zip(tgt_split, memory_win_split,
+                                                                           mask_win_split, pos_embed_win_split, query_embed_split):
+                hs_win = self.decoder(one_tgt, one_memory_win, memory_key_padding_mask=one_mask_win, pos=one_pos_embed_win,
+                                  query_pos=one_query_embed, **kwargs)
+                final_hs_win.append(hs_win)
+                torch.cuda.empty_cache()
+            final_hs_win = torch.cat(final_hs_win, dim=2)
+
+
+        num_layer, num_elm, num_win, dim = final_hs_win.shape
+        hs = final_hs_win.reshape(num_layer, num_elm * num_win, dim)
         return hs
     
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
@@ -146,13 +161,13 @@ class WinDecoderTransformer(nn.Module):
             mask_win = mask_win[v_idx]
             hs = self.decoder_forward_dynamic(query_feats, query_embed, 
                                               memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
-                                              depth_embed, **kwargs)
+                                              **kwargs)
             return hs
         else:
             # decoder forward
             hs = self.decoder_forward(query_feats, query_embed, 
                                       memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape,
-                                      depth_embed,  **kwargs)
+                                      **kwargs)
             return hs.transpose(1, 2)
         
 
@@ -174,13 +189,36 @@ class TransformerEncoder(nn.Module):
                 mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
-                layer_idx=0):
+                layer_idx=0, **kwargs):
         
         output = src
         layer = self.layers[layer_idx]
-        output = layer(output, src_mask=mask,
-                        src_key_padding_mask=src_key_padding_mask, pos=pos)        
-        return output
+
+        bs = output.shape[1]
+        group_num = 32 # if output.shape[0] == 512 else 128
+        if 'train' in kwargs or bs <= group_num:
+            final_output = layer(output, src_mask=mask,
+                            src_key_padding_mask=src_key_padding_mask, pos=pos)
+        else:
+            # 分开计算
+            num_groups = bs // group_num
+            num_left = bs % group_num
+            group_sizes = [group_num] * num_groups
+            if num_left > 0:
+                group_sizes.append(num_left)
+
+            output_split = torch.split(output, group_sizes, dim=1)
+            src_key_padding_mask_split = torch.split(src_key_padding_mask, group_sizes, dim=0)
+            pos_split = torch.split(pos, group_sizes, dim=1)
+            final_output = []
+            for one_output, one_src_key_padding_mask, one_pos_split in zip(output_split, src_key_padding_mask_split, pos_split):
+                one_output = layer(one_output, src_mask=None,
+                               src_key_padding_mask=one_src_key_padding_mask, pos=one_pos_split)
+                final_output.append(one_output)
+                torch.cuda.empty_cache()
+            final_output = torch.cat(final_output, dim=1)
+
+        return final_output
 
     def forward(self, src,
                 mask: Optional[Tensor] = None,
