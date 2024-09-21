@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.init import normal_
+from .layers import *
 
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
@@ -13,7 +14,7 @@ from .pet_decoder import PETDecoder
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
-from .utils import pos2posemb1d, load_seg_level_weight
+from .utils import pos2posemb1d
 from .layers import Segmentation_Head
     
 
@@ -23,7 +24,6 @@ class PET(nn.Module):
     """
     def __init__(self, backbone, num_classes, args=None):
         super().__init__()
-        self.args = args
         self.backbone = backbone
         
         # positional embedding
@@ -41,8 +41,9 @@ class PET(nn.Module):
         self.encode_feats = '8x'
         enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
         args.enc_layers = len(enc_win_list)
-        self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
-        
+        self.context_encoder_4x = build_encoder(args, enc_win_list=enc_win_list)
+        self.context_encoder_8x = build_encoder(args, enc_win_list=enc_win_list)
+
         # segmentation
         self.use_seg_head = args.get("use_seg_head", True)
         if self.use_seg_head:
@@ -57,27 +58,16 @@ class PET(nn.Module):
             nn.Sigmoid(),
         )
 
-        # point-query quadtree
-        args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
-        transformer = build_decoder(args)
-        self.quadtree_sparse = PETDecoder(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
-        self.quadtree_dense = PETDecoder(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
-
-        # depth adapt
-        self.adapt_pos1d = nn.Sequential(
-            nn.Linear(backbone.num_channels, backbone.num_channels),
-            nn.ReLU(),
-            nn.Linear(backbone.num_channels, backbone.num_channels),
-        )
         self.seg_level_split_th = args.seg_level_split_th
         self.warmup_ep = args.get("warmup_ep", 5)
-        
-        # level embeding
-        self.level_embed = nn.Parameter(
-            torch.Tensor(2, backbone.num_channels))
+
+        self.class_embed_4x = nn.Linear(hidden_dim, num_classes + 1)
+        self.coord_embed_4x = MLP(hidden_dim, hidden_dim, 2, 3)
+
+        self.class_embed_8x = nn.Linear(hidden_dim, num_classes + 1)
+        self.coord_embed_8x = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.bce_loss = nn.BCELoss()
-        normal_(self.level_embed)
 
     def forward(self, samples: NestedTensor, **kwargs):
         """
@@ -93,11 +83,6 @@ class PET(nn.Module):
         # positional embedding
         dense_input_embed = self.pos_embed(samples)
         kwargs['dense_input_embed'] = dense_input_embed
-
-        # depth embedding
-        depth_embed = torch.cat([pos2posemb1d(tgt['seg_level_map']) for tgt in kwargs['targets']])
-        #kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
-        kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
 
         # feature projection
         features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
@@ -163,9 +148,6 @@ class PET(nn.Module):
 
     def pet_forward(self, samples, features, pos, **kwargs):
 
-        clear_cuda_cache = self.args.get("clear_cuda_cache", False)
-        kwargs['clear_cuda_cache'] = clear_cuda_cache
-
         outputs = dict(seg_map=None)
         fea_x8 = features['8x'].tensors
 
@@ -178,40 +160,59 @@ class PET(nn.Module):
             features['8x'].tensors = features['8x'].tensors * pred_seg_map_8x
             outputs['seg_head_map'] = seg_map
 
-        # context encoding
-        src, mask = features[self.encode_feats].decompose()
-        src_pos_embed = pos[self.encode_feats]
-        assert mask is not None
-
-        encode_src = self.context_encoder(src, src_pos_embed, mask, **kwargs)
-        context_info = (encode_src, src_pos_embed, mask)
-
         # apply quadtree splitter
-        bs, _, src_h, src_w = src.shape
+        bs, _, src_h, src_w = fea_x8.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)        
+        split_map = self.quadtree_splitter(fea_x8)
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
-        
-        # quadtree layer0 forward (sparse)
+
+        # context encoding
+        def get_encode_context(encoder, feats_name, stride):
+
+            src, mask = features[feats_name].decompose()
+            src_pos_embed = pos[feats_name]
+            assert mask is not None
+
+            encode_src = encoder(src, src_pos_embed, mask, **kwargs)
+
+            query_embed, points_queries, query_feats = self.points_queris_embed(samples, stride=stride, src=encode_src, **kwargs)
+            context_info = (encode_src, src_pos_embed, mask, points_queries, query_embed)
+
+            return context_info
+
+        dense_input_embed = kwargs['dense_input_embed']
+
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
-            # level embeding
-            kwargs['level_embed'] = self.level_embed[0]
-            kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            kwargs['dec_win_size'] = [16, 8]
-            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+
+            context_info_8x = get_encode_context(self.context_encoder_8x, "8x", 8)
+            encode_src, src_pos_embed, mask, anchor_points, points_embed = context_info_8x
+
+            # quadtree layer0 forward (sparse)
+            hs = encode_src.flatten(2).permute(0, 2, 1)
+            if 'test' in kwargs:
+                mask = (split_map_sparse > 0.5).cpu()
+                hs = hs[mask].unsqueeze(0)
+                anchor_points = anchor_points.unsqueeze(0)[mask]
+            outputs_sparse = self.predict(self.class_embed_8x, self.coord_embed_8x, samples, anchor_points, hs, 8, **kwargs)
+            outputs_sparse['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             outputs_sparse['fea_shape'] = features['8x'].tensors.shape[-2:]
         else:
             outputs_sparse = None
         
-        # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
-            # level embeding
-            kwargs['level_embed'] = self.level_embed[1]
-            kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            kwargs['dec_win_size'] = [8, 4]
-            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            # quadtree layer1 forward (dense)
+            context_info_4x = get_encode_context(self.context_encoder_4x, "4x", 4)
+            encode_src, src_pos_embed, mask, anchor_points, points_embed = context_info_4x
+
+            hs = encode_src.flatten(2).permute(0, 2, 1)
+            if 'test' in kwargs:
+                mask = (split_map_dense > 0.5).cpu()
+                hs = hs[mask].unsqueeze(0)
+                anchor_points = anchor_points.unsqueeze(0)[mask]
+            outputs_dense = self.predict(self.class_embed_4x, self.coord_embed_4x, samples, anchor_points, hs, 4, **kwargs)
+            outputs_dense['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
         else:
             outputs_dense = None
@@ -223,6 +224,67 @@ class PET(nn.Module):
         outputs['split_map_sparse'] = split_map_sparse
         outputs['split_map_dense'] = split_map_dense
         return outputs
+
+    def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
+        """
+        Generate point query embedding during training
+        """
+        # dense position encoding at every pixel location
+        dense_input_embed = kwargs['dense_input_embed']
+
+        bs, c = dense_input_embed.shape[:2]
+
+        # get image shape
+        input = samples.tensors
+        image_shape = torch.tensor(input.shape[2:])
+        shape = (image_shape + stride // 2 - 1) // stride
+
+        # generate point queries
+        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
+        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+        points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1, 0)  # 2xN --> Nx2
+        h, w = shift_x.shape
+
+        # get point queries embedding
+        query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
+        bs, c = query_embed.shape[:2]
+        query_embed = query_embed.view(bs, c, h, w)
+
+        # get point queries features, equivalent to nearest interpolation
+        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
+        query_feats = src[:, :, shift_y_down, shift_x_down]
+        query_feats = query_feats.view(bs, c, h, w)
+
+        return query_embed, points_queries, query_feats
+
+    def predict(self, class_embed, coord_embed, samples, points_queries, hs, pq_stride, **kwargs):
+        """
+        Crowd prediction
+        """
+        outputs_class = class_embed(hs)
+        # normalize to 0~1
+        outputs_offsets = (coord_embed(hs).sigmoid() - 0.5) * 2.0
+
+        # normalize point-query coordinates
+        img_shape = samples.tensors.shape[-2:]
+        img_h, img_w = img_shape
+        points_queries = points_queries.float().cuda()
+        points_queries[:, 0] /= img_h
+        points_queries[:, 1] /= img_w
+
+        # rescale offset range during testing
+        if 'test' in kwargs:
+            outputs_offsets[..., 0] /= (img_h / 256)
+            outputs_offsets[..., 1] /= (img_w / 256)
+
+        outputs_points = outputs_offsets + points_queries
+        out = {'pred_logits': outputs_class, 'pred_points': outputs_points, 'img_shape': img_shape,
+               'pred_offsets': outputs_offsets}
+
+        out['points_queries'] = points_queries
+        out['pq_stride'] = pq_stride
+        return out
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
@@ -290,7 +352,7 @@ class PET(nn.Module):
             seg_level[gt_seg_level < self.seg_level_split_th] = 0
             gt_seg_levels.append(seg_level)
         gt_seg_levels = torch.cat(gt_seg_levels, dim=0)
-        loss_split_seg_level = F.binary_cross_entropy(pred_seg_levels.float().squeeze(1), gt_seg_levels)
+        loss_split_seg_level = self.bce_loss(pred_seg_levels.float().squeeze(1), gt_seg_levels)
         loss_split = loss_split_seg_level
         losses += loss_split * 0.1
         loss_dict['loss_seg_level_map'] = loss_split * 0.1

@@ -164,13 +164,20 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # inference
         outputs = model(samples, test=True, targets=targets)
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
-        outputs_points = outputs['pred_points'][0]
-        outputs_offsets = outputs['pred_offsets'][0]
-        
-        # process predicted points
-        predict_cnt = len(outputs_scores)
-        gt_cnt = targets[0]['points'].shape[0]
+        if 'predict_cnt' in outputs:
+            predict_cnt = outputs['predict_cnt']
+        else:
+            outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
+            outputs_points = outputs['pred_points'][0]
+            outputs_offsets = outputs['pred_offsets'][0]
+
+            # process predicted points
+            predict_cnt = len(outputs_scores)
+
+        if 'gt_cnt' in outputs:
+            gt_cnt = outputs['gt_cnt']
+        else:
+            gt_cnt = targets[0]['points'].shape[0]
 
         # compute error
         mae = abs(predict_cnt - gt_cnt)

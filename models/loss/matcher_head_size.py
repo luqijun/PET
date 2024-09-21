@@ -48,10 +48,13 @@ class HungarianMatcher(nn.Module):
         # flatten to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
         out_points = outputs["pred_points"].flatten(0, 1)  # [batch_size * num_queries, 2]
+        out_head_sizes = outputs['pred_head_sizes'].flatten(0, 1)
 
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets])
+        tgt_head_sizes = torch.cat([v["head_sizes"] for v in targets]).unsqueeze(-1)
+        match_point_weights = torch.cat([v["match_point_weight"] for v in targets], dim=1)
 
         # compute the classification cost, i.e., - prob[target class]
         cost_class = -out_prob[:, tgt_ids]
@@ -62,10 +65,10 @@ class HungarianMatcher(nn.Module):
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
         cost_point = split_and_compute_cdist(out_points_abs, tgt_points, n=bs, p=2)
-        # cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+        cost_head_sizes = split_and_compute_cdist(out_head_sizes * 256, tgt_head_sizes, p=2)
 
         # final cost matrix
-        C = self.cost_point * cost_point + self.cost_class * cost_class
+        C = (cost_point + cost_head_sizes) * match_point_weights + self.cost_class * cost_class
         # C = cost_point * self.cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 

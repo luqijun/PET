@@ -34,7 +34,7 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef  # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
-        self.div_thrs_dict = {8: 0.0, 4: 0.5}
+        self.div_thrs_dict = {8: -0.1, 4: 0.5}
 
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """

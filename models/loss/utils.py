@@ -10,11 +10,13 @@ def split_and_compute_cdist(points1, points2, n=1, p=2):
     :return: 形状为 (N, M) 的 Tensor，表示 points1 和 points2 之间的距离矩阵。
     """
     # 计算每一份的大小
+    points1 = points1.detach()
+    points2 = points2.detach()
     batch_size = points1.size(0) // n
     remainder = points1.size(0) % n
 
     # 初始化结果矩阵
-    result = torch.zeros((points1.size(0), points2.size(0)), device=points1.device)
+    result = torch.zeros((points1.size(0), points2.size(0)))
 
     # 分批计算距离
     start_idx = 0
@@ -26,6 +28,6 @@ def split_and_compute_cdist(points1, points2, n=1, p=2):
         start_idx = end_idx
         torch.cuda.empty_cache()
 
-    return result
+    return result.to(points1.device)
 
 

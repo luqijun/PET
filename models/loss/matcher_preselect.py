@@ -4,7 +4,6 @@ Modules to compute bipartite matching
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from .utils import split_and_compute_cdist
 
 class HungarianMatcher(nn.Module):
     """
@@ -52,6 +51,10 @@ class HungarianMatcher(nn.Module):
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets])
+        match_weights = torch.cat([v["depth_weight"] for v in targets], dim=1)
+
+        # knn distances
+        knn_distances = torch.cat([v["knn_distances"] for v in targets], dim=0).unsqueeze(0)
 
         # compute the classification cost, i.e., - prob[target class]
         cost_class = -out_prob[:, tgt_ids]
@@ -61,16 +64,36 @@ class HungarianMatcher(nn.Module):
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
-        cost_point = split_and_compute_cdist(out_points_abs, tgt_points, n=bs, p=2)
-        # cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+
+        fea_shape = outputs['fea_shape']
+        gt_fg_map = torch.stack([tgt['fg_map'] for tgt in targets], dim=0)
+        gt_fg_map_mask = torch.nn.functional.interpolate(gt_fg_map.unsqueeze(1), size=fea_shape).squeeze(1)
+        bs_fg_map_lenght = [int(sm.sum().item()) for sm in gt_fg_map_mask]
+        bs_fg_map_lenght.insert(0, 0)
+        bs_fg_map_lenght = torch.cumsum(torch.tensor(bs_fg_map_lenght), dim=0)
+        gt_fg_map_mask_flatten = gt_fg_map_mask.flatten(0).bool()
+        selected_indices = [torch.nonzero(m.flatten()).squeeze(-1) for m in gt_fg_map_mask]
+        selected_points = out_points_abs[gt_fg_map_mask_flatten, :]
+
+
+        cost_point = torch.cdist(selected_points, tgt_points, p=2)
+        cost_class = cost_class[gt_fg_map_mask_flatten, :]
 
         # final cost matrix
-        C = self.cost_point * cost_point + self.cost_class * cost_class
+        C = cost_point * match_weights + self.cost_class * cost_class
         # C = cost_point * self.cost_point + self.cost_class * cost_class
-        C = C.view(bs, num_queries, -1).cpu()
-
+        # C = C.view(bs, num_queries, -1).cpu()
+        C = C.cpu()
+        indices = []
         sizes = [len(v["points"]) for v in targets]
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+        for i, c in enumerate(C.split(sizes, -1)):
+            c = c[bs_fg_map_lenght[i]:bs_fg_map_lenght[i+1], :]
+            indice = linear_sum_assignment(c)
+            indice = (selected_indices[i][indice[0]], indice[1])
+            indices.append(indice)
+
+        # sizes = [len(v["points"]) for v in targets]
+        # indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 

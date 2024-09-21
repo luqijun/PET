@@ -115,7 +115,7 @@ class WinDecoderTransformer(nn.Module):
 
         bs = tgt.shape[1]
         group_num = 128 # 32 if tgt.shape[0]==32 else 128
-        if bs <= group_num:
+        if bs <= group_num or not kwargs['clear_cuda_cache']:
             final_hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win,
                                   query_pos=query_embed, **kwargs)
         else:
@@ -195,8 +195,8 @@ class TransformerEncoder(nn.Module):
         layer = self.layers[layer_idx]
 
         bs = output.shape[1]
-        group_num = 32 # if output.shape[0] == 512 else 128
-        if 'train' in kwargs or bs <= group_num:
+        group_num = 8 # if output.shape[0] == 512 else 128
+        if 'train' in kwargs or bs <= group_num or not kwargs['clear_cuda_cache']:
             final_output = layer(output, src_mask=mask,
                             src_key_padding_mask=src_key_padding_mask, pos=pos)
         else:

@@ -34,7 +34,7 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef  # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
-        self.div_thrs_dict = {8: 0.0, 4: 0.5}
+        self.div_thrs_dict = {8: -0.1, 4: 0.5}
 
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
@@ -137,6 +137,54 @@ class SetCriterion(nn.Module):
 
         return losses
 
+
+    def loss_head_sizes(self, outputs, targets, indices, num_points, **kwargs):
+
+        assert 'pred_points' in outputs
+        # get indices
+        idx = self._get_src_permutation_idx(indices)
+        src_head_sizes = outputs['pred_head_sizes'][idx]
+        target_head_sizes = torch.cat([t['head_sizes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_head_sizes = target_head_sizes / 256
+
+        # compute regression loss
+        losses = {}
+        loss_points_raw = F.smooth_l1_loss(src_head_sizes.squeeze(1), target_head_sizes, reduction='none')
+
+        # 使用深度权重
+        # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
+        # depth_weights = depth_weights[:len(loss_points_raw)]
+        # loss_points_raw *= depth_weights
+
+        if 'div' in kwargs:
+            # get sparse / dense index
+            den = torch.tensor([target['density'] for target in targets])
+            den_sort = torch.sort(den)[1]
+            img_ds_idx = den_sort[:len(den_sort) // 2]
+            img_sp_idx = den_sort[len(den_sort) // 2:]
+            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
+            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
+
+            # dual supervision for sparse/dense images
+            eps = 1e-5
+            split_map = kwargs['div']
+            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
+            div_mask = split_map > div_thrs
+            loss_points_div = loss_points_raw * div_mask[idx]
+            loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
+            loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
+
+            # loss on non-div regions
+            non_div_mask = split_map <= div_thrs
+            loss_points_nondiv = (loss_points_raw * non_div_mask[idx]).sum() / (
+                    non_div_mask[idx].sum() + eps)
+
+            # final point loss
+            losses['loss_head_sizes'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
+        else:
+            losses['loss_head_sizes'] = loss_points_raw.sum() / num_points
+
+        return losses
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -153,6 +201,7 @@ class SetCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'points': self.loss_points,
+            'head_sizes': self.loss_head_sizes
         }
         assert loss in loss_map, f'{loss} loss is not defined'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)

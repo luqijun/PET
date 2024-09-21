@@ -60,3 +60,8 @@ def mask2pos(mask):
     y_embed = (y_embed - 0.5) / y_embed[:, -1:]
     x_embed = (x_embed - 0.5) / x_embed[:, -1:]
     return y_embed, x_embed
+
+
+def load_seg_level_weight(resume):
+    checkpoint = torch.load(resume, map_location='cpu')
+    # checkpoint['model']

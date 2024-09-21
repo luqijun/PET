@@ -13,7 +13,7 @@ from .pet_decoder import PETDecoder
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
-from .utils import pos2posemb1d, load_seg_level_weight
+from .utils import pos2posemb1d
 from .layers import Segmentation_Head
     
 
@@ -23,7 +23,6 @@ class PET(nn.Module):
     """
     def __init__(self, backbone, num_classes, args=None):
         super().__init__()
-        self.args = args
         self.backbone = backbone
         
         # positional embedding
@@ -163,15 +162,12 @@ class PET(nn.Module):
 
     def pet_forward(self, samples, features, pos, **kwargs):
 
-        clear_cuda_cache = self.args.get("clear_cuda_cache", False)
-        kwargs['clear_cuda_cache'] = clear_cuda_cache
-
         outputs = dict(seg_map=None)
         fea_x8 = features['8x'].tensors
 
         # apply seg head
         if self.use_seg_head:
-            seg_map = self.seg_head(fea_x8)  # 已经经过sigmoid处理了
+            seg_map = self.seg_head(fea_x8) # 已经经过sigmoid处理了
             pred_seg_map_4x = F.interpolate(seg_map, size=features['4x'].tensors.shape[-2:])
             pred_seg_map_8x = F.interpolate(seg_map, size=features['8x'].tensors.shape[-2:])
             features['4x'].tensors = features['4x'].tensors * pred_seg_map_4x
@@ -236,11 +232,11 @@ class PET(nn.Module):
 
         # compute loss
         if epoch >= warmup_ep:
-            loss_dict_sparse, _ = criterion(output_sparse, targets, div=outputs['split_map_sparse'])
-            loss_dict_dense, _ = criterion(output_dense, targets, div=outputs['split_map_dense'])
+            loss_dict_sparse, sp_indices = criterion(output_sparse, targets, div=outputs['split_map_sparse'])
+            loss_dict_dense, ds_indices = criterion(output_dense, targets, div=outputs['split_map_dense'])
         else:
-            loss_dict_sparse, _ = criterion(output_sparse, targets)
-            loss_dict_dense, _ = criterion(output_dense, targets)
+            loss_dict_sparse, sp_indices = criterion(output_sparse, targets)
+            loss_dict_dense, ds_indices = criterion(output_dense, targets)
 
         # sparse point queries loss
         loss_dict_sparse = {k + '_sp': v for k, v in loss_dict_sparse.items()}
@@ -282,21 +278,67 @@ class PET(nn.Module):
             loss_dict['loss_seg_head_map'] = loss_seg_map * 0.1
 
         # splitter depth loss
-        pred_seg_levels = outputs['split_map_raw']
-        gt_seg_levels = []
-        for tgt in targets:
-            gt_seg_level = F.adaptive_avg_pool2d(tgt['seg_level_map'], pred_seg_levels.shape[-2:])
-            seg_level = torch.ones(gt_seg_level.shape, device=gt_seg_level.device)
-            seg_level[gt_seg_level < self.seg_level_split_th] = 0
-            gt_seg_levels.append(seg_level)
-        gt_seg_levels = torch.cat(gt_seg_levels, dim=0)
-        loss_split_seg_level = F.binary_cross_entropy(pred_seg_levels.float().squeeze(1), gt_seg_levels)
-        loss_split = loss_split_seg_level
+        loss_split = self.cal_seg_level_loss_by_error_map(criterion, outputs, targets, sp_indices, ds_indices)
         losses += loss_split * 0.1
         loss_dict['loss_seg_level_map'] = loss_split * 0.1
 
         return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
 
+
+    def cal_seg_level_loss_by_error_map(self, criterion, outputs, targets, sp_indices, ds_indices):
+
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+
+        output_low = output_dense
+        indices_low = ds_indices
+
+        # high
+        output_high = output_sparse
+        indices_high = sp_indices
+
+        # seg level
+        pred_seg_level = outputs['split_map_raw']
+        discrete_maps = torch.stack([tgt['label_map'] for tgt in targets], dim=0)
+
+        B, h, w = discrete_maps.shape
+        t_h, t_w = pred_seg_level.shape[-2:]
+        discrete_maps = discrete_maps.view(B, t_h, h // t_h, t_w, w // t_w).permute(0, 1, 3, 2, 4)
+        discrete_maps = discrete_maps.flatten(-2).sum(-1)
+
+        pred_discrete_map_low = self.get_pred_discrete_map(criterion, output_low, indices_low, t_h, t_w)
+        pred_discrete_map_high = self.get_pred_discrete_map(criterion, output_high, indices_high, t_h, t_w)
+        error_low = (pred_discrete_map_low - discrete_maps).abs()
+        error_high = (pred_discrete_map_high - discrete_maps).abs()
+
+        gt_seg_level_mask = (error_low < error_high).float()  # 低级特征误差大，则mask为对应高级特征
+        loss_seg_level = self.bce_loss(pred_seg_level.flatten(1), gt_seg_level_mask.flatten(1))
+        return loss_seg_level
+
+
+    def get_pred_discrete_map(self, criterion, output, indices, t_h, t_w):
+        thres = 0.5
+        h, w = output['fea_shape']
+
+        # idx = criterion._get_src_permutation_idx(indices)
+        # pred_logits = output['pred_logits']
+        # pred_logits = pred_logits[idx].softmax(dim=-1)[..., 1]
+        # num_points_per_fea = 1
+        # B = pred_logits.shape[0]
+        # _, num_total_points, _ = pred_logits.shape
+        # pred_logits_low_mask = (pred_logits > thres).cpu()
+        # idx = (idx[0][pred_logits_low_mask], idx[1][pred_logits_low_mask])
+        # pred_discrete_map = torch.zeros((B, num_total_points), device=pred_logits.device)
+        # pred_discrete_map[idx] = 1
+        # pred_discrete_map = pred_discrete_map.view(B, -1, num_points_per_fea).sum(-1)
+
+        scores = output['pred_logits'].softmax(dim=-1)[..., 1]
+        pred_discrete_map = (scores > thres).float()
+
+        B = pred_discrete_map.shape[0]
+        pred_discrete_map = pred_discrete_map.view(B, h, w) \
+            .view(B, t_h, h // t_h, t_w, w // t_w).permute(0, 1, 3, 2, 4)
+        pred_discrete_map = pred_discrete_map.flatten(-2).sum(-1)
+        return pred_discrete_map
 
 def build_pet(args, backbone, num_classes):
     # build model

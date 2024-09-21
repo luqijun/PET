@@ -114,7 +114,7 @@ def main(args):
 
     # output directory and log 
     if utils.is_main_process:
-        output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
+        output_dir = os.path.join("./outputs", args.dataset_file, args.model, args.output_dir)
         os.makedirs(output_dir, exist_ok=True)
         output_dir = Path(output_dir)
         run_log_name = os.path.join(output_dir, 'run_log.txt')
@@ -128,7 +128,7 @@ def main(args):
     start_epoch = 0
     best_mae, best_epoch = 1e8, 0
     best_mse, best_mse_epoch = 1e8, 0
-    if args.resume:
+    if args.get('resume', None):
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)

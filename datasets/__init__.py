@@ -3,6 +3,8 @@ import torchvision
 
 from .SHA import build as build_sha
 from .SHA_FgMask import build as build_sha_fg_mask
+from .SHA_General import build as build_sha_general
+from .SHA_General_Multi_Points import build as build_sha_general_multi_points
 # from .SHB import build as build_shb
 # from .UCF_QNRF import build as build_ucf_qnrf
 from .JHU import build as build_jhu
@@ -19,6 +21,10 @@ def build_dataset(image_set, args):
         return build_sha(image_set, args)
     if args.dataset_file == "SHA_FgMask":
         return build_sha_fg_mask(image_set, args)
+    if args.dataset_file == "SHA_General":
+        return build_sha_general(image_set, args)
+    if args.dataset_file == "SHA_General_Multi_Points":
+        return  build_sha_general_multi_points(image_set, args)
     # if args.dataset_file == 'SHB':
     #     return build_shb(image_set, args)
     # if args.dataset_file == 'UCF_QNRF':

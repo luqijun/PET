@@ -23,10 +23,11 @@ def main():
     # 配置参数
     N = args.total_times  # 循环次数
     sh_script = args.sh_script  # 你的sh脚本路径
-    cfg = args.cfg
-    dataset_file = Config.fromfile(cfg).dataset_file
-    output_dir = f'outputs/{dataset_file}/{args.output_dir}' # 输出目录
-    result_dir = f'outputs/{dataset_file}/{args.result_dir}' # 结果目录
+    cfg_file = args.cfg
+    cfg = Config.fromfile(cfg_file)
+    dataset_file = cfg.dataset_file
+    output_dir = f'outputs/{dataset_file}/{cfg.model}/{args.output_dir}' # 输出目录
+    result_dir = f'outputs/{dataset_file}/{cfg.model}/{args.result_dir}' # 结果目录
 
     # 确保结果目录存在
     if not os.path.exists(result_dir):
@@ -36,17 +37,20 @@ def main():
     mae_pattern = re.compile(r'best mae: (\d+\.\d+)')
     mse_pattern = re.compile(r'best mse: (\d+\.\d+)')
 
+    has_error = False
     for i in range(N):
         print(f'Executing iteration {i + 1}...')
 
         # 执行sh脚本并重定向输出到当前控制台
-        process = subprocess.Popen(['bash', sh_script, cfg], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(['bash', sh_script, cfg_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
         # 读取输出并提取“best mae”和“best mse”
         mae = 0
         mse = 0
         for line in process.stdout:
             print(line, end='')
+            if "ERROR:" in line:
+                has_error = True
             mae_match = mae_pattern.search(line)
             mse_match = mse_pattern.search(line)
             if mae_match:
@@ -56,6 +60,9 @@ def main():
 
         # 等待脚本执行完毕
         process.wait()
+
+        if has_error:
+            break
 
         # 检查输出目录是否存在
         if os.path.exists(output_dir):
