@@ -7,7 +7,6 @@ from torch import nn
 
 from .layers import *
 from .transformer import *
-from .utils import expand_anchor_points
 
 class PETDecoder(nn.Module):
     """ 
@@ -17,11 +16,10 @@ class PETDecoder(nn.Module):
         super().__init__()
         self.backbone = backbone
         self.transformer = kwargs['transformer']
-        self.num_pts_per_feature = args.get('num_pts_per_feature', 1)
         hidden_dim = args.hidden_dim
 
-        self.class_embed = nn.Linear(hidden_dim, (num_classes + 1) * self.num_pts_per_feature)
-        self.coord_embed = MLP(hidden_dim, hidden_dim, 2 * self.num_pts_per_feature, 3)
+        self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
+        self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
@@ -30,14 +28,23 @@ class PETDecoder(nn.Module):
         encode_src, src_pos_embed, mask = context_info
 
         # get points queries for transformer
+        # (query_embed, points_queries, query_feats, depth_embed)
         pqs = self.get_point_query(samples, features, **kwargs)
 
         # point querying
         kwargs['pq_stride'] = self.pq_stride
-        hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
+        hs, v_idx_list = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
 
         # prediction
         points_queries = pqs[1]
+        if len(v_idx_list) > 0:
+            qH, qW = pqs[2].shape[-2:]
+            dec_win_h, dec_win_w = kwargs['dec_win_size_list'][-1]
+            points_queries = points_queries.reshape(qH, qW, 2).permute(2, 0, 1).unsqueeze(0)
+            points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
+            points_queries_win = points_queries_win.to(encode_src.device)
+            points_queries = points_queries_win[:, v_idx_list[-1]].reshape(-1, 2)
+
         outputs = self.predict(samples, points_queries, hs, **kwargs)
         return outputs
 
@@ -47,20 +54,10 @@ class PETDecoder(nn.Module):
         """
         src, _ = features[self.feat_name].decompose()
 
-        # generate points queries and position embedding
-        if 'train' in kwargs:
-            query_embed, points_queries, query_feats, depth_embed = self.points_queris_embed(samples, self.pq_stride,
-                                                                                             src, **kwargs)
-            query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
-            depth_embed = depth_embed.flatten(2).permute(2, 0, 1)
-            v_idx = None
-        else:
-            query_embed, points_queries, query_feats, v_idx, depth_embed = self.points_queris_embed_inference(samples,
-                                                                                                              self.pq_stride,
-                                                                                                              src,
-                                                                                                              **kwargs)
+        query_embed, points_queries, query_feats, depth_embed = \
+            self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
 
-        out = (query_embed, points_queries, query_feats, v_idx, depth_embed)
+        out = (query_embed, points_queries, query_feats, depth_embed)
         return out
 
     def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
@@ -171,20 +168,13 @@ class PETDecoder(nn.Module):
         """
         Crowd prediction
         """
-        num_layers, bs, num_query, dim = hs.shape
         outputs_class = self.class_embed(hs)
-        outputs_class = outputs_class.reshape(num_layers, bs, num_query * self.num_pts_per_feature, 2)
         # normalize to 0~1
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
-        outputs_offsets = outputs_offsets.reshape(num_layers, bs, num_query * self.num_pts_per_feature, 2)
 
         # normalize point-query coordinates
         img_shape = samples.tensors.shape[-2:]
         img_h, img_w = img_shape
-
-        if self.num_pts_per_feature == 4:
-            points_queries = expand_anchor_points(points_queries, self.pq_stride, with_origin=False)
-
         points_queries = points_queries.float().cuda()
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w

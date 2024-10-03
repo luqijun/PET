@@ -14,7 +14,7 @@ from .pet_decoder import PETDecoder
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
-from .utils import pos2posemb1d
+from .utils import pos2posemb1d, expand_anchor_points
 from .layers import Segmentation_Head
     
 
@@ -249,16 +249,6 @@ class PET(nn.Module):
             context_info = (encode_src, src_pos_embed, mask, points_queries, query_embed)
 
             return context_info
-
-
-        def expand_anchor_points(points, stride):
-
-            step = stride // 4
-            offsets = torch.tensor([[-step, -step], [step, -step], [step, step], [-step, step]]).to(points.device)
-            points = points.unsqueeze(1)
-            new_points = points + offsets.unsqueeze(0)
-            new_points = torch.cat([points, new_points], dim=1)
-            return new_points.flatten(0, 1)
 
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
 

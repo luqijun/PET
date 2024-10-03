@@ -4,6 +4,7 @@ from .criterion import SetCriterion
 from .criterion_middle_merge import SetCriterion as SetCriterion_Middle_Merge
 from .criterion_mm_head_size import SetCriterion as SetCriterion_mm_head_size
 from .criterion_multi_points import SetCriterion as SetCriterion_multi_points
+from .criterion_ignore_pt_loss import SetCriterion as SetCriterion_ignore_pt_loss
 
 from .matcher import build_matcher
 from .matcher_with_points_weight import build_matcher as build_matcher_with_points_weight
@@ -46,6 +47,9 @@ def build_criterion(args):
                                      eos_coef=args.eos_coef, losses=losses)
         case "criterion_multi_points":
             criterion = SetCriterion_multi_points(args.num_classes, matcher=matcher, weight_dict=weight_dict,
+                                          eos_coef=args.eos_coef, losses=losses, args=args)
+        case "criterion_ignore_pt_loss":
+            criterion = SetCriterion_ignore_pt_loss(args.num_classes, matcher=matcher, weight_dict=weight_dict,
                                           eos_coef=args.eos_coef, losses=losses, args=args)
         case _:
             raise ValueError(f"Criterion Name not find：{criterion_name}")

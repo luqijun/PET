@@ -121,12 +121,12 @@ def cal_match_weight_by_depth(depth_values, scale, head_size_weight = 0.5):
     return weights
 
 
-def cal_match_weight_by_headsizes(head_sizes, head_size_weight = 1.0):
+def cal_match_weight_by_headsizes(head_sizes, head_size_weight = 1.0, min=0.01, max=0.09):
 
     if len(head_sizes) == 0:
         return head_sizes
     weights = 1 / (head_sizes * head_size_weight)
-    weights = torch.clamp(weights, min=0.01, max=0.09)
+    weights = torch.clamp(weights, min=min, max=max)
     return weights.unsqueeze(0)
 
 

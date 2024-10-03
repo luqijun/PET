@@ -62,6 +62,11 @@ def mask2pos(mask):
     return y_embed, x_embed
 
 
-def load_seg_level_weight(resume):
-    checkpoint = torch.load(resume, map_location='cpu')
-    # checkpoint['model']
+def expand_anchor_points(points, stride, with_origin=True):
+    step = stride // 4
+    offsets = torch.tensor([[-step, -step], [-step, step], [step, step], [step, -step]]).to(points.device)
+    points = points.unsqueeze(1)
+    new_points = points + offsets.unsqueeze(0)
+    if with_origin:
+        new_points = torch.cat([points, new_points], dim=1)
+    return new_points.flatten(0, 1)

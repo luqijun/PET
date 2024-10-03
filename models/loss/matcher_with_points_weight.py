@@ -4,7 +4,7 @@ Modules to compute bipartite matching
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from .utils import split_and_compute_cdist
+from .utils import split_and_compute_cdist2
 
 class HungarianMatcher(nn.Module):
     """
@@ -48,10 +48,12 @@ class HungarianMatcher(nn.Module):
         # flatten to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
         out_points = outputs["pred_points"].flatten(0, 1)  # [batch_size * num_queries, 2]
+        out_points_sizes = [outputs["pred_points"].shape[1]] * bs
 
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets]).float()
+        tgt_points_sizes = [len(v["points"]) for v in targets]
         match_point_weights = torch.cat([v["match_point_weight"] for v in targets], dim=1)
 
         # compute the classification cost, i.e., - prob[target class]
@@ -62,7 +64,7 @@ class HungarianMatcher(nn.Module):
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
-        cost_point = split_and_compute_cdist(out_points_abs, tgt_points, n=bs, p=2)
+        cost_point = split_and_compute_cdist2(out_points_abs, out_points_sizes, tgt_points, tgt_points_sizes, p=2)
         # cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix

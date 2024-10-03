@@ -16,7 +16,7 @@ clip_max_norm=0.1
 lr=0.0001
 epochs=1000
 batch_size=8
-eval_start=100
+eval_start=300
 eval_freq=1
 
 # model
@@ -47,4 +47,4 @@ head_sizes_folder = "images_head_size_by_depth_var"
 seg_level_folder="images_depth"
 seg_head_folder="images_head_split_by_depth_var"
 seg_level_split_th = 0.2
-head_size_weight = 2.0 # 0.8
+head_size_weight = 1.5 # 0.8

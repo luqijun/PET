@@ -26,8 +26,10 @@ def main():
     cfg_file = args.cfg
     cfg = Config.fromfile(cfg_file)
     dataset_file = cfg.dataset_file
-    output_dir = f'outputs/{dataset_file}/{cfg.model}/{args.output_dir}' # 输出目录
-    result_dir = f'outputs/{dataset_file}/{cfg.model}/{args.result_dir}' # 结果目录
+    sub_save_dir = cfg.get('sub_save_dir', '')
+    folder = os.path.join("outputs", dataset_file, cfg.model, sub_save_dir)
+    output_dir = os.path.join(folder, args.output_dir) # 输出目录
+    result_dir =os.path.join(folder, args.result_dir) # 结果目录
 
     # 确保结果目录存在
     if not os.path.exists(result_dir):

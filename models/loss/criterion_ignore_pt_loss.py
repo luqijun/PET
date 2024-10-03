@@ -16,7 +16,7 @@ class SetCriterion(nn.Module):
         2) supervise each pair of matched ground-truth / prediction and split map
     """
 
-    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses, args):
+    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses, args=None):
         """
         Parameters:
             num_classes: one-class in crowd counting
@@ -26,7 +26,7 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
-        self.num_pts_per_feature = args.get('num_pts_per_feature', 1)
+        self.args = args
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
@@ -35,7 +35,7 @@ class SetCriterion(nn.Module):
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef  # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
-        self.div_thrs_dict = {8: -0.1, 4: 0.5}
+        self.div_thrs_dict = {8: 0.0, 4: 0.5}
 
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
@@ -68,7 +68,6 @@ class SetCriterion(nn.Module):
             split_map = kwargs['div']
             div_thrs = self.div_thrs_dict[outputs['pq_stride']]
             div_mask = split_map > div_thrs
-            div_mask = div_mask.unsqueeze(-1).repeat(1, 1, (self.num_pts_per_feature)).flatten(1)
 
             # dual supervision for sparse/dense images
             loss_ce_sp = (raw_ce_loss * weights * div_mask)[sp_idx].sum() / ((weights * div_mask)[sp_idx].sum() + eps)
@@ -77,7 +76,6 @@ class SetCriterion(nn.Module):
 
             # loss on non-div regions
             non_div_mask = split_map <= div_thrs
-            non_div_mask = non_div_mask.unsqueeze(-1).repeat(1, 1, (self.num_pts_per_feature)).flatten(1)
             loss_ce_nondiv = (raw_ce_loss * weights * non_div_mask).sum() / ((weights * non_div_mask).sum() + eps)
             loss_ce = loss_ce + loss_ce_nondiv
         else:
@@ -92,18 +90,34 @@ class SetCriterion(nn.Module):
            - targets dicts must contain the key "points" containing a tensor of dim [nb_target_points, 2]
         """
         assert 'pred_points' in outputs
+
+        img_shape = outputs['img_shape']
+        img_h, img_w = img_shape
+
         # get indices
         idx = self._get_src_permutation_idx(indices)
         src_points = outputs['pred_points'][idx]
         target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
+        head_sizes = torch.cat([t['head_sizes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        head_size_range = head_sizes * self.args.head_size_range_ratio
+        # src_points_origin = src_points.clone()
+        # src_points_origin[:, 0] *= img_h
+        # src_points_origin[:, 1] *= img_w
+        # points_dist = torch.sqrt(torch.pow(src_points_origin[:, 0] - target_points[:,0], 2) +
+        #                          torch.pow(src_points_origin[:, 1] - target_points[:,1], 2))
+
+        # points_outer_mask = points_dist > head_size_range
+
         # compute regression loss
         losses = {}
-        img_shape = outputs['img_shape']
-        img_h, img_w = img_shape
+
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+
+        # loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+        # loss_points_raw = loss_points_raw * points_outer_mask.float().unsqueeze(-1)
+        loss_points_raw = self.smooth_l1_loss(src_points, target_points, (head_size_range / img_h).unsqueeze(-1), reduction='none') # F.smooth_l1_loss(src_points, target_points, reduction='none')
 
         # 使用深度权重
         # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
@@ -124,14 +138,12 @@ class SetCriterion(nn.Module):
             split_map = kwargs['div']
             div_thrs = self.div_thrs_dict[outputs['pq_stride']]
             div_mask = split_map > div_thrs
-            div_mask = div_mask.unsqueeze(-1).repeat(1, 1, (self.num_pts_per_feature)).flatten(1)
             loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
             loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
             loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
 
             # loss on non-div regions
             non_div_mask = split_map <= div_thrs
-            non_div_mask = non_div_mask.unsqueeze(-1).repeat(1, 1, (self.num_pts_per_feature)).flatten(1)
             loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
                         non_div_mask[idx].sum() + eps)
 
@@ -141,6 +153,21 @@ class SetCriterion(nn.Module):
             losses['loss_points'] = loss_points_raw.sum() / num_points
 
         return losses
+
+    @staticmethod
+    def smooth_l1_loss(input, target, size_range, reduction='mean'):
+        diff = torch.abs(input - target) - size_range
+        diff = torch.clamp(diff, min=0.0)
+        loss = torch.where(diff < 1, 0.5 * diff * diff, diff - 0.5)
+
+        if reduction == 'mean':
+            return loss.mean()
+        elif reduction == 'sum':
+            return loss.sum()
+        elif reduction == 'none':
+            return loss
+        else:
+            raise ValueError("reduction should be 'mean', 'sum', or 'none'")
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices

@@ -39,6 +39,7 @@ set_cost_point=0.05
 ce_loss_coef=1.0
 point_loss_coef=5.0
 eos_coef=0.5
+num_pts_per_feature = 5
 
 # dataset
 dataset_file="SHA_General_Multi_Points"

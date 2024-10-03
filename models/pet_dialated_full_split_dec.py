@@ -9,9 +9,9 @@ from torch.nn.init import normal_
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
 
-from .pet_decoder import PETDecoder
+from .pet_decoder_uniform import PETDecoder
 from .backbones import *
-from .transformer import *
+from .transformer.dialated_prog_win_transformer_full_split_dec import build_encoder, build_decoder
 from .position_encoding import build_position_encoding
 from .utils import pos2posemb1d
 from .layers import Segmentation_Head
@@ -39,9 +39,10 @@ class PET(nn.Module):
 
         # context encoder
         self.encode_feats = '8x'
-        enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
-        args.enc_layers = len(enc_win_list)
-        self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
+        self.enc_win_size_list = args.enc_win_size_list  # encoder window size
+        self.enc_win_dialation_list = args.enc_win_dialation_list
+        args.enc_layers = len(self.enc_win_size_list)
+        self.context_encoder = build_encoder(args, enc_win_size_list=self.enc_win_size_list, enc_win_dialation_list=self.enc_win_dialation_list)
         
         # segmentation
         self.use_seg_head = args.get("use_seg_head", True)
@@ -49,7 +50,7 @@ class PET(nn.Module):
             self.seg_head = Segmentation_Head(args.hidden_dim, 1)
 
         # quadtree splitter
-        context_patch = (128, 64)
+        context_patch = torch.tensor(self.enc_win_size_list[-1]) * 8
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
         self.quadtree_splitter = nn.Sequential(
             nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
@@ -170,13 +171,16 @@ class PET(nn.Module):
         fea_x8 = features['8x'].tensors
 
         # apply seg head
-        if self.use_seg_head:
+        if self.args.use_seg_head:
             seg_map = self.seg_head(fea_x8)  # 已经经过sigmoid处理了
-            pred_seg_map_4x = F.interpolate(seg_map, size=features['4x'].tensors.shape[-2:])
-            pred_seg_map_8x = F.interpolate(seg_map, size=features['8x'].tensors.shape[-2:])
+            outputs['seg_head_map'] = seg_map
+        if self.args.use_seg_head_attention:
+            seg_map_attention = seg_map.sigmoid()
+            pred_seg_map_4x = F.interpolate(seg_map_attention, size=features['4x'].tensors.shape[-2:])
+            pred_seg_map_8x = F.interpolate(seg_map_attention, size=features['8x'].tensors.shape[-2:])
             features['4x'].tensors = features['4x'].tensors * pred_seg_map_4x
             features['8x'].tensors = features['8x'].tensors * pred_seg_map_8x
-            outputs['seg_head_map'] = seg_map
+
 
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -193,13 +197,22 @@ class PET(nn.Module):
         split_map = self.quadtree_splitter(encode_src)        
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
+
+        if self.args.use_seg_level_attention:
+            dense_feats_shape = features['4x'].tensors.shape[-2:]
+            sparse_feats_shape = features['8x'].tensors.shape[-2:]
+            seg_level_attention_dense_4x = split_map_dense.sigmoid().reshape(bs, 1, dense_feats_shape[0], dense_feats_shape[1])
+            seg_level_attention_dense_8x = (1 - split_map_sparse).sigmoid().reshape(bs, 1, sparse_feats_shape[0], sparse_feats_shape[1])
+            features['4x'].tensors = features['4x'].tensors * seg_level_attention_dense_4x
+            features['8x'].tensors = features['8x'].tensors * seg_level_attention_dense_8x
         
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             # level embeding
             kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            kwargs['dec_win_size'] = [16, 8]
+            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_8x # [8, 4]
+            kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_8x
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
             outputs_sparse['fea_shape'] = features['8x'].tensors.shape[-2:]
         else:
@@ -210,7 +223,9 @@ class PET(nn.Module):
             # level embeding
             kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            kwargs['dec_win_size'] = [8, 4]
+
+            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_4x # // 2 # [4, 2]
+            kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_4x
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
             outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
         else:
@@ -278,8 +293,8 @@ class PET(nn.Module):
                 pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
             # pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
             loss_seg_map = self.bce_loss(pred_seg_map.float().squeeze(1), gt_seg_map.float().squeeze(1))
-            losses += loss_seg_map * 0.1
-            loss_dict['loss_seg_head_map'] = loss_seg_map * 0.1
+            losses += loss_seg_map * self.args.seg_head_loss_weight
+            loss_dict['loss_seg_head_map'] = loss_seg_map * self.args.seg_head_loss_weight
 
         # splitter depth loss
         pred_seg_levels = outputs['split_map_raw']
@@ -292,8 +307,8 @@ class PET(nn.Module):
         gt_seg_levels = torch.cat(gt_seg_levels, dim=0)
         loss_split_seg_level = F.binary_cross_entropy(pred_seg_levels.float().squeeze(1), gt_seg_levels)
         loss_split = loss_split_seg_level
-        losses += loss_split * 0.1
-        loss_dict['loss_seg_level_map'] = loss_split * 0.1
+        losses += loss_split * self.args.seg_level_loss_weight
+        loss_dict['loss_seg_level_map'] = loss_split * self.args.seg_level_loss_weight
 
         return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
 

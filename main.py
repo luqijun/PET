@@ -65,9 +65,17 @@ def main(args):
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
     random.seed(seed)
+    np.random.seed(seed)
+
+    # 如果使用CUDA
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # 确保所有线程使用相同的种子
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     # build model
     model, criterion = build_model(args)
@@ -114,7 +122,8 @@ def main(args):
 
     # output directory and log 
     if utils.is_main_process:
-        output_dir = os.path.join("./outputs", args.dataset_file, args.model, args.output_dir)
+        sub_save_dir = args.get('sub_save_dir', '')
+        output_dir = os.path.join("./outputs", args.dataset_file, args.model, sub_save_dir, args.output_dir)
         os.makedirs(output_dir, exist_ok=True)
         output_dir = Path(output_dir)
         run_log_name = os.path.join(output_dir, 'run_log.txt')

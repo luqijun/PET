@@ -115,7 +115,9 @@ class SHA(Dataset):
         target['seg_level_map'] = img_seg_level_map
         target['seg_head_map'] = img_seg_head_map
         target['head_sizes'] = head_sizes.float()
-        target['match_point_weight'] = cal_match_weight_by_headsizes(head_sizes, self.args.head_size_weight) # cal_match_weight_by_depth(depth, scale, self.args.head_size_weight)
+        target['match_point_weight'] = cal_match_weight_by_headsizes(head_sizes, self.args.head_size_weight,
+                                                                     min=self.args.get("min_match_point_weight", 0.01),
+                                                                     max=self.args.get("max_match_point_weight", 0.09)) # cal_match_weight_by_depth(depth, scale, self.args.head_size_weight)
         # target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
         target['label_map'] = self.get_label_map(points, img_seg_level_map.shape[-2:])
         # if self.train:
