@@ -30,6 +30,8 @@ dim_feedforward=512
 nheads=8
 dropout=0.0
 use_seg_head=False
+use_seg_head_attention=False
+use_seg_level_attention=False
 
 # encoder 结构
 # 49.77 80.94

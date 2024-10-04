@@ -161,7 +161,7 @@ class WinDecoderTransformer(nn.Module):
                                                                             int(self.dec_win_h / div_ratio),
                                                                             int(self.dec_win_w / div_ratio))
 
-                    if is_test:
+                    if is_test and div is not None:
                         div_one = div[:,  i::stride, j::stride]
                         div_win = window_partition(div_one.unsqueeze(1), window_size_h=self.dec_win_h,
                                                    window_size_w=self.dec_win_w)
@@ -192,10 +192,10 @@ class WinDecoderTransformer(nn.Module):
             mem_mask_win = torch.cat(mem_mask_win_list, dim=0)
 
             decoder_idx = 0 if len(self.decoder_list) == 1 else idx
-            hs_win = self.decoder_list[idx](tgt_win, mem_win, memory_key_padding_mask=mem_mask_win,
+            hs_win = self.decoder_list[decoder_idx](tgt_win, mem_win, memory_key_padding_mask=mem_mask_win,
                                   pos=mem_pos_win, query_pos=tgt_pos_win, **kwargs)
 
-            if is_test:
+            if is_test  and div is not None:
                 if idx < len(dec_win_size_list) - 1:
                     hs_win = hs_win[-1]
                     split_sizes = [vi.sum().item() for vi in v_idx_list]
