@@ -1,12 +1,14 @@
 import torch
 
 from .criterion import SetCriterion
+from .criterion_4x1 import SetCriterion as SetCriterion_4x1
 from .criterion_middle_merge import SetCriterion as SetCriterion_Middle_Merge
 from .criterion_mm_head_size import SetCriterion as SetCriterion_mm_head_size
 from .criterion_multi_points import SetCriterion as SetCriterion_multi_points
 from .criterion_ignore_pt_loss import SetCriterion as SetCriterion_ignore_pt_loss
 
 from .matcher import build_matcher
+from .matcher_4x1 import build_matcher as build_matcher_4x1
 from .matcher_with_points_weight import build_matcher as build_matcher_with_points_weight
 from .matcher_preselect import build_matcher as build_matcher_pre_select
 from .matcher_preselect_with_knndist import build_matcher as build_matcher_pre_select_with_knndist
@@ -19,6 +21,7 @@ def build_criterion(args):
     matcher_name = args.get("matcher", "matcher_depth")
     match matcher_name:
         case "matcher": matcher = build_matcher(args)
+        case "matcher_4x1": matcher = build_matcher_4x1(args)
         case "matcher_with_points_weight": matcher = build_matcher_with_points_weight(args)
         case "matcher_pre_select": matcher = build_matcher_pre_select(args)
         case "matcher_preselect_with_knndist": matcher = build_matcher_pre_select_with_knndist(args)
@@ -39,6 +42,9 @@ def build_criterion(args):
         case "SetCriterion":
             criterion = SetCriterion(args.num_classes, matcher=matcher, weight_dict=weight_dict,
                                      eos_coef=args.eos_coef, losses=losses)
+        case "criterion_4x1":
+            criterion = SetCriterion_4x1(args.num_classes, matcher=matcher, weight_dict=weight_dict,
+                             eos_coef=args.eos_coef, losses=losses)
         case "criterion_middle_merge":
             criterion = SetCriterion_Middle_Merge(args.num_classes, matcher=matcher, weight_dict=weight_dict,
                                      eos_coef=args.eos_coef, losses=losses)

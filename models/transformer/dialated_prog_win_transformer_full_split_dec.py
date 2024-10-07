@@ -128,6 +128,8 @@ class WinDecoderTransformer(nn.Module):
         dec_win_dialation_list = kwargs['dec_win_dialation_list']
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
         is_test = 'test' in kwargs
+
+        hs_result_list = []
         for idx, (dec_win_size, stride) in enumerate(zip(dec_win_size_list, dec_win_dialation_list)):
 
             v_idx_list = []
@@ -183,7 +185,6 @@ class WinDecoderTransformer(nn.Module):
                     mem_pos_win_list.append(mem_pos_win)
                     mem_mask_win_list.append(mem_mask_win)
 
-
             tgt_win = torch.cat(tgt_win_list, dim=1)
             tgt_pos_win = torch.cat(tgt_pos_win_list, dim=1)
 
@@ -217,7 +218,6 @@ class WinDecoderTransformer(nn.Module):
                 else:
                     num_layer, num_elm, num_win, dim = hs_win.shape
                     hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
-
             else:
                 if idx < len(dec_win_size_list) - 1:
 
@@ -236,12 +236,15 @@ class WinDecoderTransformer(nn.Module):
                             query_feats_res[:, :, i::stride, j::stride] = hs_win_split_list_reverse[split_idx]
                             split_idx += 1
                     query_feats = query_feats_res
+                    hs = query_feats.flatten(-2).transpose(1, 2).unsqueeze(0)
                 else:
                     hs_tmp = [window_partition_reverse(hs_w, self.dec_win_h, self.dec_win_w, qH, qW) for hs_w in hs_win]
                     hs = torch.vstack([hs_t.unsqueeze(0) for hs_t in hs_tmp])
                     hs = hs.transpose(1, 2)
 
-        return hs, v_idx_list
+            hs_result_list.append(hs)
+
+        return hs_result_list, v_idx_list
 
 
     def decoder_forward(self, query_feats, query_embed, memory_win, pos_embed_win, mask_win, dec_win_h, dec_win_w, src_shape,
