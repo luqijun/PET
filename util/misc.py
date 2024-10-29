@@ -3,33 +3,33 @@ Misc functions, including distributed helpers.
 
 Mostly copy-paste from torchvision references.
 """
+import datetime
 import os
-import subprocess
+import pickle
 import time
 from collections import defaultdict, deque
-import datetime
-import pickle
 from typing import Optional, List
 
 import torch
 import torch.distributed as dist
+# needed due to empty tensor bug in pytorch and torchvision 0.5
+import torchvision
 from torch import Tensor
 from torchvision.utils import save_image
 
-# needed due to empty tensor bug in pytorch and torchvision 0.5
-import torchvision
 if float(torchvision.__version__.split(".")[1]) < 7.0:
-    from torchvision.ops import _new_empty_tensor
-    from torchvision.ops.misc import _output_size
+    pass
 
 
 def save_tensor_to_image(tensor, save_path):
     save_image(tensor, save_path)
 
+
 class SmoothedValue(object):
     """
     Track a series of values and provide access to smoothed values over a window or the global series average.
     """
+
     def __init__(self, window_size=20, fmt=None):
         if fmt is None:
             fmt = "{median:.6f} ({global_avg:.6f})"
@@ -202,15 +202,16 @@ class MetricLogger(object):
         data_time = SmoothedValue(fmt='{avg:.4f}')
         space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
         if torch.cuda.is_available():
-            log_msg = self.delimiter.join([
-                header,
-                '[{0' + space_fmt + '}/{1}]',
-                'eta: {eta}',
-                '{meters}',
-                'time: {time}',
-                'data: {data}',
-                'max mem: {memory:.0f}'
-            ])
+            log_msg = f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]' + \
+                      self.delimiter.join([
+                          header,
+                          '[{0' + space_fmt + '}/{1}]',
+                          'eta: {eta}',
+                          '{meters}',
+                          'time: {time}',
+                          'data: {data}',
+                          'max mem: {memory:.0f}'
+                      ])
         else:
             log_msg = self.delimiter.join([
                 header,
@@ -248,24 +249,23 @@ class MetricLogger(object):
             header, total_time_str, total_time / len(iterable)))
 
 
-
 def collate_fn(batch):
     batch = list(zip(*batch))
     batch[0] = nested_tensor_from_tensor_list(batch[0])
     img_shape = batch[0].tensors.shape[-2:]
-    for tgt in batch[1]:
-        if tgt['seg_level_map'].shape[-2:] != img_shape:
-            pad_w = img_shape[1] - tgt['seg_level_map'].shape[-1]
-            pad_h = img_shape[0] - tgt['seg_level_map'].shape[-2]
+    # for tgt in batch[1]:
+    #     if tgt['seg_level_map'].shape[-2:] != img_shape:
+    #         pad_w = img_shape[1] - tgt['seg_level_map'].shape[-1]
+    #         pad_h = img_shape[0] - tgt['seg_level_map'].shape[-2]
+    #
+    #         # depth pad
+    #         tgt['seg_level_map'] = torch.nn.functional.pad(tgt['seg_level_map'], (0, pad_w, 0, pad_h))
 
-            # depth pad
-            tgt['seg_level_map'] = torch.nn.functional.pad(tgt['seg_level_map'], (0, pad_w, 0, pad_h))
-
-        # depth level
-        # img_depth = tgt['depth']
-        # depth_level = torch.ones(img_depth.shape, device=img_depth.device)
-        # depth_level[img_depth > 0.4] = 0
-        # tgt['depth_level'] = depth_level
+    # depth level
+    # img_depth = tgt['depth']
+    # depth_level = torch.ones(img_depth.shape, device=img_depth.device)
+    # depth_level[img_depth > 0.4] = 0
+    # tgt['depth_level'] = depth_level
 
     return tuple(batch)
 
@@ -279,7 +279,7 @@ def _max_by_axis_pad(the_list):
 
     block = 256
     for i in range(2):
-        maxes[i+1] = ((maxes[i+1] - 1) // block + 1) * block
+        maxes[i + 1] = ((maxes[i + 1] - 1) // block + 1) * block
     return maxes
 
 

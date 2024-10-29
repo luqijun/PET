@@ -4,16 +4,15 @@ Train and eval functions used in main.py
 import math
 import os
 import sys
+from datetime import datetime
 from typing import Iterable
-import numpy as np
-import cv2
 
+import cv2
+import numpy as np
 import torch
 import torchvision.transforms as standard_transforms
-import torch.nn.functional as F
 
 import util.misc as utils
-from util.misc import NestedTensor
 
 
 class DeNormalize(object):
@@ -26,8 +25,8 @@ class DeNormalize(object):
             t.mul_(s).add_(m)
         return tensor
 
-def save_split_map(save_path, gt_map, pred_map):
 
+def save_split_map(save_path, gt_map, pred_map):
     # 创建一个全零的数组作为间隔
     H, W = gt_map.shape
     gap = np.zeros((H, 10))
@@ -40,7 +39,8 @@ def save_split_map(save_path, gt_map, pred_map):
     cv2.imwrite(save_path, combined)
 
 
-def visualization(samples, targets, pred, vis_dir, gt_split_map=None, gt_seg_head_map=None, pred_split_map=None, pred_seg_head_map=None, **kwargs):
+def visualization(samples, targets, pred, vis_dir, gt_split_map=None, gt_seg_head_map=None, pred_split_map=None,
+                  pred_seg_head_map=None, **kwargs):
     """
     Visualize predictions
     """
@@ -72,22 +72,25 @@ def visualization(samples, targets, pred, vis_dir, gt_split_map=None, gt_seg_hea
         name = targets[idx]['image_path'].split('/')[-1].split('.')[0]
         # draw split map
         if pred_split_map is not None:
-            save_path = os.path.join(vis_dir, '{}_gt{}_pred{}_split_map.jpg'.format(name, len(gts[idx]), len(pred[idx])))
+            save_path = os.path.join(vis_dir,
+                                     '{}_gt{}_pred{}_split_map.jpg'.format(name, len(gts[idx]), len(pred[idx])))
             save_split_map(save_path, gt_split_map, pred_split_map)
 
         # draw seg_head_map map
         if pred_seg_head_map is not None:
-            save_path = os.path.join(vis_dir, '{}_gt{}_pred{}_seg_head_map.jpg'.format(name, len(gts[idx]), len(pred[idx])))
+            save_path = os.path.join(vis_dir,
+                                     '{}_gt{}_pred{}_seg_head_map.jpg'.format(name, len(gts[idx]), len(pred[idx])))
             save_split_map(save_path, gt_seg_head_map, pred_seg_head_map)
-        
+
         # save image
         if vis_dir is not None:
             # eliminate invalid area
             imgH, imgW = masks.shape[-2:]
             valid_area = torch.where(~masks[idx])
             valid_h, valid_w = valid_area[0][-1], valid_area[1][-1]
-            sample_vis = sample_vis[:valid_h+1, :valid_w+1]
-            cv2.imwrite(os.path.join(vis_dir, '{}_gt{}_pred{}.jpg'.format(name, len(gts[idx]), len(pred[idx]))), sample_vis)
+            sample_vis = sample_vis[:valid_h + 1, :valid_w + 1]
+            cv2.imwrite(os.path.join(vis_dir, '{}_gt{}_pred{}.jpg'.format(name, len(gts[idx]), len(pred[idx]))),
+                        sample_vis)
 
 
 # training
@@ -107,8 +110,8 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         gt_points = [target['points'] for target in targets]
 
-        outputs = model(samples, epoch=epoch, train=True, 
-                                        criterion=criterion, targets=targets)
+        outputs = model(samples, epoch=epoch, train=True,
+                        criterion=criterion, targets=targets)
         loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
 
         # reduce losses over all GPUs for logging purposes
@@ -137,11 +140,11 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         if is_train_one:
             break
-    
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("===================Averaged stats===================")
-    print(metric_logger)
+    print(f"===================Averaged stats===================")
+    print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}] {metric_logger}')
     print("====================================================")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
@@ -193,16 +196,18 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
 
         # visualize predictions
-        if vis_dir: 
-            points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
-            gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
-            gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(0)).float().numpy() if 'gt_seg_head_map' in outputs else None
+        if vis_dir:
+            points = [[point[0] * img_h, point[1] * img_w] for point in outputs_points]  # recover to actual points
+            gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(
+                0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
+            gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(
+                0)).float().numpy() if 'gt_seg_head_map' in outputs else None
             pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
             pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
             visualization(samples, targets, [points], vis_dir,
                           gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
                           pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
-    
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}

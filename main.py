@@ -1,24 +1,23 @@
 import argparse
 import datetime
 import json
-import random
-import time
-from pathlib import Path
 import os
+import random
 import shutil
+import time
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
+from mmengine.config import Config, DictAction
 from torch.utils.data import DataLoader, DistributedSampler
 
-import datasets
 import util.misc as utils
 from datasets import build_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
 
-from mmengine.config import Config, DictAction
 
 # 合并配置，以 config 配置为主
 def merge_config(config, args):
@@ -27,6 +26,7 @@ def merge_config(config, args):
             continue
         config[key] = value
     return config
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
@@ -51,7 +51,7 @@ def main(args):
     utils.init_distributed_mode(args)
 
     if args.cfg:
-        config =  Config.fromfile(args.cfg)
+        config = Config.fromfile(args.cfg)
         if args.cfg_options is not None:
             config.merge_from_dict(args.cfg_options)
         args = merge_config(config, args)
@@ -116,9 +116,10 @@ def main(args):
         sampler_train, args.batch_size, drop_last=True)
 
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                collate_fn=utils.collate_fn, num_workers=args.num_workers, pin_memory=True)
+                                   collate_fn=utils.collate_fn, num_workers=args.num_workers, pin_memory=True)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers, pin_memory=True)
+                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                 pin_memory=True)
 
     # output directory and log 
     if utils.is_main_process:
@@ -159,18 +160,19 @@ def main(args):
     for epoch in range(start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
-        
+
         t1 = time.time()
         train_stats = train_one_epoch(args,
-            model, criterion, data_loader_train, optimizer, device, epoch,
-            args.clip_max_norm)
+                                      model, criterion, data_loader_train, optimizer, device, epoch,
+                                      args.clip_max_norm)
         t2 = time.time()
-        print('[ep %d][lr %.7f][%.2fs]' % \
+        print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}][ep %d][lr %.7f][%.2fs]' % \
               (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
-        
+
         if utils.is_main_process:
             with open(run_log_name, "a") as log_file:
-                log_file.write('\n[ep %d][lr %.7f][%.2fs]' % (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
+                log_file.write(f'\n[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}][ep %d][lr %.7f][%.2fs]' % (
+                    epoch, optimizer.param_groups[0]['lr'], t2 - t1))
 
         lr_scheduler.step()
 
@@ -213,14 +215,15 @@ def main(args):
                 best_mse = mse
             print("\n==========================")
             print("\nepoch:", epoch, "mae:", mae, "mse:", mse,
-                  "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "\tbest mse:", best_mse, "best epoch:", best_mse_epoch)
+                  "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "\tbest mse:", best_mse, "best epoch:",
+                  best_mse_epoch)
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a") as log_file:
                     log_file.write("\nepoch: {}, mae: {}, mse: {}, time: {}, \n\n"
                                    "best mae: {}, best epoch: {}\tbest mse: {}, best epoch: {}".format(
-                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
-                                                
+                        epoch, mae, mse, t2 - t1, best_mae, best_epoch, best_mse, best_mse_epoch))
+
                 # save best checkpoint
                 src_path = output_dir / 'checkpoint.pth'
                 if mae == best_mae:
