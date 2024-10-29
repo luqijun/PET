@@ -24,7 +24,7 @@ eval_freq=1
 model="pet_dialated_full_split_dec"
 backbone="vgg16_bn"
 position_embedding="sine" # 'sine', 'learned', 'fourier'
-resume="outputs/SHA_General/pet_dialated_full_split_dec/ignore_pt_loss/pet_model_ntimes/checkpoint.pth"
+# resume="outputs/SHA_General/pet_dialated_full_split_dec/ignore_pt_loss/pet_model_ntimes/checkpoint.pth"
 
 hidden_dim=256
 dim_feedforward=512

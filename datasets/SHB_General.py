@@ -18,7 +18,7 @@ from .utils import compute_density, random_crop, cal_match_weight_by_depth, cal_
 warnings.filterwarnings('ignore')
 
 
-class SHA(Dataset):
+class SHB(Dataset):
     def __init__(self, args, data_root, transform=None, train=False, flip=False):
         self.args = args
         self.root_path = data_root
@@ -29,9 +29,12 @@ class SHA(Dataset):
         # get image and ground-truth list
         self.gt_list = {}
         prefix_list = ["train_data"] if prefix == "train" else ["test_data"]
+        ignore_img_108 = self.args.get('ignore_img_108', False)
         for sub_prefix in prefix_list:
             img_list = os.listdir(f"{data_root}/{sub_prefix}/images")
             for img_name in img_list:
+                if ignore_img_108 and img_name == 'IMG_108.jpg':
+                    continue
                 txt_name = img_name.replace(".jpg", ".txt")
                 h5_name = img_name.replace(".jpg", ".h5")
                 mat_name = img_name.replace(".jpg", ".mat")
@@ -105,7 +108,6 @@ class SHA(Dataset):
         target = {}
         points = torch.Tensor(points)
         target['points'] = points
-
         if self.train:
             target['labels'] = torch.ones([points.shape[0]]).long()
 
@@ -239,8 +241,8 @@ def build(image_set, args):
 
     data_root = args.data_path
     if image_set == 'train':
-        train_set = SHA(args, data_root, train=True, transform=transform, flip=True)
+        train_set = SHB(args, data_root, train=True, transform=transform, flip=True)
         return train_set
     elif image_set == 'val':
-        val_set = SHA(args, data_root, train=False, transform=transform)
+        val_set = SHB(args, data_root, train=False, transform=transform)
         return val_set

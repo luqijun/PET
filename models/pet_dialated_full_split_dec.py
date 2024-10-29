@@ -6,26 +6,23 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.init import normal_
 
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       get_world_size, is_dist_avail_and_initialized)
-
-from .pet_decoder_uniform import PETDecoder
-from .backbones import *
-from .transformer.dialated_prog_win_transformer_full_split_dec import build_encoder, build_decoder
-from .position_encoding import build_position_encoding
-from .utils import pos2posemb1d
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list)
 from .layers import Segmentation_Head
-    
+from .pet_decoder_uniform import PETDecoder
+from .position_encoding import build_position_encoding
+from .transformer.dialated_prog_win_transformer_full_split_dec import build_encoder, build_decoder
+
 
 class PET(nn.Module):
     """ 
     Point quEry Transformer
     """
+
     def __init__(self, backbone, num_classes, args=None):
         super().__init__()
         self.args = args
         self.backbone = backbone
-        
+
         # positional embedding
         self.pos_embed = build_position_encoding(args)
 
@@ -34,7 +31,7 @@ class PET(nn.Module):
         self.input_proj = nn.ModuleList([
             nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1),
             nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1),
-            ]
+        ]
         )
 
         # context encoder
@@ -42,8 +39,9 @@ class PET(nn.Module):
         self.enc_win_size_list = args.enc_win_size_list  # encoder window size
         self.enc_win_dialation_list = args.enc_win_dialation_list
         args.enc_layers = len(self.enc_win_size_list)
-        self.context_encoder = build_encoder(args, enc_win_size_list=self.enc_win_size_list, enc_win_dialation_list=self.enc_win_dialation_list)
-        
+        self.context_encoder = build_encoder(args, enc_win_size_list=self.enc_win_size_list,
+                                             enc_win_dialation_list=self.enc_win_dialation_list)
+
         # segmentation
         self.use_seg_head = args.get("use_seg_head", True)
         if self.use_seg_head:
@@ -51,28 +49,25 @@ class PET(nn.Module):
 
         # quadtree splitter
         context_patch = torch.tensor(self.enc_win_size_list[-1]) * 8
-        context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
+        context_w, context_h = context_patch[0] // int(self.encode_feats[:-1]), context_patch[1] // int(
+            self.encode_feats[:-1])
         self.quadtree_splitter = nn.Sequential(
-            nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
+            nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
             nn.Conv2d(hidden_dim, 1, 1),
             nn.Sigmoid(),
         )
 
         # point-query quadtree
-        args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
+        args.sparse_stride, args.dense_stride = 8, 4  # point-query stride
         transformer = build_decoder(args)
-        self.quadtree_sparse = PETDecoder(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
-        self.quadtree_dense = PETDecoder(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
+        self.quadtree_sparse = PETDecoder(backbone, num_classes, quadtree_layer='sparse', args=args,
+                                          transformer=transformer)
+        self.quadtree_dense = PETDecoder(backbone, num_classes, quadtree_layer='dense', args=args,
+                                         transformer=transformer)
 
-        # depth adapt
-        self.adapt_pos1d = nn.Sequential(
-            nn.Linear(backbone.num_channels, backbone.num_channels),
-            nn.ReLU(),
-            nn.Linear(backbone.num_channels, backbone.num_channels),
-        )
         self.seg_level_split_th = args.seg_level_split_th
         self.warmup_ep = args.get("warmup_ep", 5)
-        
+
         # level embeding
         self.level_embed = nn.Parameter(
             torch.Tensor(2, backbone.num_channels))
@@ -96,9 +91,9 @@ class PET(nn.Module):
         kwargs['dense_input_embed'] = dense_input_embed
 
         # depth embedding
-        depth_embed = torch.cat([pos2posemb1d(tgt['seg_level_map']) for tgt in kwargs['targets']])
-        #kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
-        kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
+        # depth_embed = torch.cat([pos2posemb1d(tgt['seg_level_map']) for tgt in kwargs['targets']])
+        # kwargs['depth_input_embed'] = depth_embed.permute(0, 3, 1, 2)
+        # kwargs['depth_input_embed'] = self.adapt_pos1d(depth_embed).permute(0, 3, 1, 2)
 
         # feature projection
         features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
@@ -108,7 +103,7 @@ class PET(nn.Module):
         if 'train' in kwargs:
             out = self.train_forward(samples, features, pos, **kwargs)
         else:
-            out = self.test_forward(samples, features, pos, **kwargs)   
+            out = self.test_forward(samples, features, pos, **kwargs)
         return out
 
     def test_forward(self, samples, features, pos, **kwargs):
@@ -147,9 +142,9 @@ class PET(nn.Module):
             else:
                 div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
 
-        gt_split_map = 1 - (torch.cat([tgt['seg_level_map'] for tgt in kwargs['targets']], dim=0) > self.seg_level_split_th).long()
-        div_out['gt_split_map'] = gt_split_map
-        div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
+        # gt_split_map = 1 - (torch.cat([tgt['seg_level_map'] for tgt in kwargs['targets']], dim=0) > self.seg_level_split_th).long()
+        # div_out['gt_split_map'] = gt_split_map
+        # div_out['pred_split_map'] = F.interpolate(outputs['split_map_raw'], size=gt_split_map.shape[-2:]).squeeze(1)
         # div_out['gt_seg_head_map'] = torch.cat([tgt['seg_head_map'].unsqueeze(0) for tgt in kwargs['targets']], dim=0)
         # div_out['pred_seg_head_map'] = F.interpolate(outputs['seg_head_map'], size=div_out['gt_seg_head_map'].shape[-2:]).squeeze(1)
         return div_out
@@ -181,7 +176,6 @@ class PET(nn.Module):
             features['4x'].tensors = features['4x'].tensors * pred_seg_map_4x
             features['8x'].tensors = features['8x'].tensors * pred_seg_map_8x
 
-
         # context encoding
         src, mask = features[self.encode_feats].decompose()
         src_pos_embed = pos[self.encode_feats]
@@ -194,43 +188,45 @@ class PET(nn.Module):
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)        
+        split_map = self.quadtree_splitter(encode_src)
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
 
         if self.args.use_seg_level_attention:
             dense_feats_shape = features['4x'].tensors.shape[-2:]
             sparse_feats_shape = features['8x'].tensors.shape[-2:]
-            seg_level_attention_dense_4x = split_map_dense.sigmoid().reshape(bs, 1, dense_feats_shape[0], dense_feats_shape[1])
-            seg_level_attention_dense_8x = (1 - split_map_sparse).sigmoid().reshape(bs, 1, sparse_feats_shape[0], sparse_feats_shape[1])
+            seg_level_attention_dense_4x = split_map_dense.sigmoid().reshape(bs, 1, dense_feats_shape[0],
+                                                                             dense_feats_shape[1])
+            seg_level_attention_dense_8x = (1 - split_map_sparse).sigmoid().reshape(bs, 1, sparse_feats_shape[0],
+                                                                                    sparse_feats_shape[1])
             features['4x'].tensors = features['4x'].tensors * seg_level_attention_dense_4x
             features['8x'].tensors = features['8x'].tensors * seg_level_attention_dense_8x
-        
+
         # quadtree layer0 forward (sparse)
         if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
             # level embeding
             kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_8x # [8, 4]
+            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_8x  # [8, 4]
             kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_8x
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
             outputs_sparse['fea_shape'] = features['8x'].tensors.shape[-2:]
         else:
             outputs_sparse = None
-        
+
         # quadtree layer1 forward (dense)
         if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
             # level embeding
             kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
 
-            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_4x # // 2 # [4, 2]
+            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_4x  # // 2 # [4, 2]
             kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_4x
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
             outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
         else:
             outputs_dense = None
-        
+
         # format outputs
         outputs['sparse'] = outputs_sparse
         outputs['dense'] = outputs_dense
@@ -280,7 +276,7 @@ class PET(nn.Module):
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
-        
+
         # seg head loss
         if self.use_seg_head:
             pred_seg_map = outputs['seg_head_map']
@@ -293,8 +289,8 @@ class PET(nn.Module):
                 pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
             # pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
             loss_seg_map = self.bce_loss(pred_seg_map.float().squeeze(1), gt_seg_map.float().squeeze(1))
-            losses += loss_seg_map * self.args.seg_head_loss_weight
-            loss_dict['loss_seg_head_map'] = loss_seg_map * self.args.seg_head_loss_weight
+            losses += loss_seg_map * self.args.get('seg_head_loss_weight', 0.1)
+            loss_dict['loss_seg_head_map'] = loss_seg_map * self.args.get('seg_head_loss_weight', 0.1)
 
         # splitter depth loss
         pred_seg_levels = outputs['split_map_raw']
@@ -307,8 +303,8 @@ class PET(nn.Module):
         gt_seg_levels = torch.cat(gt_seg_levels, dim=0)
         loss_split_seg_level = F.binary_cross_entropy(pred_seg_levels.float().squeeze(1), gt_seg_levels)
         loss_split = loss_split_seg_level
-        losses += loss_split * self.args.seg_level_loss_weight
-        loss_dict['loss_seg_level_map'] = loss_split * self.args.seg_level_loss_weight
+        losses += loss_split * self.args.get('seg_level_loss_weight', 0.1)
+        loss_dict['loss_seg_level_map'] = loss_split * self.args.get('seg_level_loss_weight', 0.1)
 
         return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
 

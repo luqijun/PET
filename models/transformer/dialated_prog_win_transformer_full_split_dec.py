@@ -120,7 +120,7 @@ class WinDecoderTransformer(nn.Module):
 
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
-        query_embed, points_queries, query_feats, depth_embed = pqs
+        query_embed, points_queries, query_feats = pqs
 
         qH, qW = query_feats.shape[-2:]
 
@@ -215,6 +215,7 @@ class WinDecoderTransformer(nn.Module):
                             query_feats_res[:, :, i::stride, j::stride] = tgt_win
                             split_idx += 1
                     query_feats = query_feats_res
+                    hs = query_feats.flatten(-2).transpose(1, 2).unsqueeze(0)
                 else:
                     num_layer, num_elm, num_win, dim = hs_win.shape
                     hs = hs_win.reshape(num_layer, num_elm * num_win, dim)

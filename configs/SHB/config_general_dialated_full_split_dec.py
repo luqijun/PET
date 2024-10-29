@@ -1,7 +1,7 @@
 nproc_per_node=1
 master_port=10002
 
-num_workers=2
+num_workers=8
 syn_bn=0
 world_size=1
 seed=42
@@ -14,16 +14,16 @@ clip_max_norm=0.1
 
 # train
 lr=0.0001
-epochs=600
-batch_size=8
-eval_start=90
+epochs=10000
+batch_size=16
+eval_start=900
 eval_freq=1
 
 # model
 model="pet_dialated_full_split_dec"
 backbone="vgg16_bn"
 position_embedding="sine" # 'sine', 'learned', 'fourier'
-# resume="outputs/SHA_General/pet_dialated_full_split_dec/pet_model_ntimes/checkpoint.pth"
+# resume="outputs/SHB_General/pet_dialated_full_split_dec/pet_model_ntimes/checkpoint.pth"
 
 hidden_dim=256
 dim_feedforward=512
@@ -54,12 +54,12 @@ enc_win_dialation_list = [4, 4, 2, 2, 1, 1] # 长度必须和enc_win_list一致
 # dec_win_dialation_list_4x = [2, 1]
 
 # decoder结构
-dec_blocks=2 # 为1时应用于所有的window
-dec_layers=1
-dec_win_size_list_8x = [(8, 4), (8, 4)]
-dec_win_dialation_list_8x = [2, 1]
-dec_win_size_list_4x = [(4, 2), (4, 2)]
-dec_win_dialation_list_4x = [2, 1]
+dec_blocks=1 # 为1时应用于所有的window
+dec_layers=2
+dec_win_size_list_8x = [(8, 4)]
+dec_win_dialation_list_8x = [1]
+dec_win_size_list_4x = [(4, 2)]
+dec_win_dialation_list_4x = [1]
 
 
 # criterion
@@ -70,12 +70,12 @@ ce_loss_coef=1.0
 point_loss_coef=5.0 #0.5(48.65_80.68) # 5.0
 eos_coef=0.5
 
-seg_head_loss_weight = 0.1
-seg_level_loss_weight = 0.1
+seg_head_loss_weight = 0.05# 0.1
+seg_level_loss_weight = 0.05#0.1
 
 # dataset
-dataset_file="SHA_General"
-data_path="./data/ShanghaiTech/part_A/"
+dataset_file="SHB_General"
+data_path="./data/ShanghaiTech/part_B/"
 output_dir="pet_model"
 head_sizes_folder = "images_head_size_by_depth_var"
 seg_level_folder="images_depth"
