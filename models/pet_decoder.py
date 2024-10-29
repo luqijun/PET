@@ -30,38 +30,24 @@ class PETDecoder(nn.Module):
     def forward(self, samples, features, context_info, **kwargs):
         encode_src, src_pos_embed, mask = context_info
 
+        src, _ = features[self.feat_name].decompose()
+
         # get points queries for transformer
-        pqs = self.get_point_query(samples, features, **kwargs)
+        # generate points queries and position embedding
+        query_feats_win, query_embed_win, points_queries, qH, qW = \
+            self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
+
+        pqs = (query_feats_win, query_embed_win, points_queries, qH, qW)
 
         # point querying
         kwargs['pq_stride'] = self.pq_stride
-        hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
+        kwargs['query_hw'] = (qH, qW)
+        hs, points_queries = self.transformer(encode_src, src_pos_embed, mask, pqs,
+                                              img_shape=samples.tensors.shape[-2:], **kwargs)
 
         # prediction
-        points_queries = pqs[1]
         outputs = self.predict(samples, points_queries, hs, **kwargs)
         return outputs
-
-    def get_point_query(self, samples, features, **kwargs):
-        """
-        Generate point query
-        """
-        src, _ = features[self.feat_name].decompose()
-
-        # generate points queries and position embedding
-        if 'train' in kwargs:
-            query_embed, points_queries, query_feats = self.points_queris_embed(samples, self.pq_stride,
-                                                                                src, **kwargs)
-            query_embed = query_embed.flatten(2).permute(2, 0, 1)  # NxCxHxW --> (HW)xNxC
-            v_idx = None
-        else:
-            query_embed, points_queries, query_feats, v_idx = self.points_queris_embed_inference(samples,
-                                                                                                 self.pq_stride,
-                                                                                                 src,
-                                                                                                 **kwargs)
-
-        out = (query_embed, points_queries, query_feats, v_idx, None)
-        return out
 
     def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
         """
@@ -73,8 +59,6 @@ class PETDecoder(nn.Module):
         if 'level_embed' in kwargs:
             level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
             dense_input_embed = dense_input_embed + level_embed
-
-        bs, c = dense_input_embed.shape[:2]
 
         # get image shape
         input = samples.tensors
@@ -91,70 +75,20 @@ class PETDecoder(nn.Module):
         # get point queries embedding
         query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
         bs, c = query_embed.shape[:2]
-        query_embed = query_embed.view(bs, c, h, w)
 
         # get point queries features, equivalent to nearest interpolation
         shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
         query_feats = src[:, :, shift_y_down, shift_x_down]
+
+        query_embed = query_embed.view(bs, c, h, w)
         query_feats = query_feats.view(bs, c, h, w)
 
-        return query_embed, points_queries, query_feats
-
-    def points_queris_embed_inference(self, samples, stride=8, src=None, **kwargs):
-        """
-        Generate point query embedding during inference
-        """
-        # dense position encoding at every pixel location
-        dense_input_embed = kwargs['dense_input_embed']
-
-        if 'level_embed' in kwargs:
-            level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
-            dense_input_embed = dense_input_embed + level_embed
-
-        bs, c = dense_input_embed.shape[:2]
-
-        # get image shape
-        input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:])
-        shape = (image_shape + stride // 2 - 1) // stride
-
-        # generate points queries
-        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
-        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
-        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
-        points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1, 0)  # 2xN --> Nx2
-        h, w = shift_x.shape
-
-        # get points queries embedding 
-        query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
-        bs, c = query_embed.shape[:2]
-
-        # get points queries features, equivalent to nearest interpolation
-        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
-        query_feats = src[:, :, shift_y_down, shift_x_down]
-
-        # window-rize
-        query_embed = query_embed.reshape(bs, c, h, w)
-        points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
-        query_feats = query_feats.reshape(bs, c, h, w)
-
+        # 拆分成window
         dec_win_w, dec_win_h = kwargs['dec_win_size']
         query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
-        # dynamic point query generation
-        div = kwargs['div']
-        thrs = 0.5
-        div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > thrs).sum(dim=0)[:, 0]
-        v_idx = valid_div > 0
-        query_embed_win = query_embed_win[:, v_idx]
-        query_feats_win = query_feats_win[:, v_idx]
-        points_queries_win = points_queries_win.to(v_idx.device)
-        points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
-
-        return query_embed_win, points_queries_win, query_feats_win, v_idx
+        return query_feats_win, query_embed_win, points_queries, h, w
 
     def predict(self, samples, points_queries, hs, **kwargs):
         """
