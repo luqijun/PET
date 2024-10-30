@@ -125,10 +125,14 @@ class WinDecoderTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
-        
-        query_feats_win, query_embed_win, points_queries, qH, qW = pqs
+
         dec_win_w, dec_win_h = kwargs['dec_win_size']
-        self.dec_win_w, self.dec_win_h = kwargs['dec_win_size']
+        self.dec_win_w, self.dec_win_h = dec_win_w, dec_win_h
+        query_feats, query_embed, points_queries, qH, qW = pqs
+
+        # 拆分成window
+        query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
+        query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
         # window-rize memory input
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2

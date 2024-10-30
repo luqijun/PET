@@ -5,7 +5,6 @@ import torch
 from torch import nn
 
 from .layers import *
-from .transformer import *
 from .utils import expand_anchor_points
 
 
@@ -34,10 +33,10 @@ class PETDecoder(nn.Module):
 
         # get points queries for transformer
         # generate points queries and position embedding
-        query_feats_win, query_embed_win, points_queries, qH, qW = \
+        query_feats, query_embed, points_queries, qH, qW = \
             self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
 
-        pqs = (query_feats_win, query_embed_win, points_queries, qH, qW)
+        pqs = (query_feats, query_embed, points_queries, qH, qW)
 
         # point querying
         kwargs['pq_stride'] = self.pq_stride
@@ -83,12 +82,7 @@ class PETDecoder(nn.Module):
         query_embed = query_embed.view(bs, c, h, w)
         query_feats = query_feats.view(bs, c, h, w)
 
-        # 拆分成window
-        dec_win_w, dec_win_h = kwargs['dec_win_size']
-        query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)
-        query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
-
-        return query_feats_win, query_embed_win, points_queries, h, w
+        return query_feats, query_embed, points_queries, h, w
 
     def predict(self, samples, points_queries, hs, **kwargs):
         """
