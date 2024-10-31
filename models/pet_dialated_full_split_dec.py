@@ -8,7 +8,7 @@ from torch.nn.init import normal_
 
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list)
 from .layers import Segmentation_Head
-from .pet_decoder_uniform import PETDecoder
+from .pet_decoder import PETDecoder
 from .position_encoding import build_position_encoding
 from .transformer.dialated_prog_win_transformer_full_split_dec import build_encoder, build_decoder
 
