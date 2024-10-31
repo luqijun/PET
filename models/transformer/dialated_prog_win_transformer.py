@@ -1,14 +1,15 @@
 """
 Transformer Encoder and Decoder with Progressive Rectangle Window Attention
 """
-import copy
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
-from torch import nn, Tensor
+import torch.nn as nn
+from torch import Tensor
 
-from .utils import *
+from .layers import TransformerEncoder, TransformerDecoder, EncoderLayer, DecoderLayer
+from .utils import _get_clones, win_partion_with_dialated, win_unpartion_with_dialated, window_partition, \
+    window_partition_reverse, enc_win_partition, enc_win_partition_reverse
 
 
 class WinEncoderTransformer(nn.Module):
@@ -16,14 +17,19 @@ class WinEncoderTransformer(nn.Module):
     Transformer Encoder, featured with progressive rectangle window attention
     """
 
-    def __init__(self, d_model=256, nhead=8, num_encoder_layers=4,
+    def __init__(self, d_model=256, nhead=8,
+                 num_encoder_blocks=1,
+                 num_encoder_layers=4,
                  dim_feedforward=512, dropout=0.0,
                  activation="relu",
                  **kwargs):
         super().__init__()
-        encoder_layer = EncoderLayer(d_model, nhead, dim_feedforward,
-                                     dropout, activation)
-        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, **kwargs)
+        encoder_layer = EncoderLayer(d_model, nhead, dim_feedforward, dropout, activation)
+
+        self.encoders = nn.Sequential(*[
+            TransformerEncoder(encoder_layer, num_encoder_layers, **kwargs)
+            for _ in range(num_encoder_blocks)
+        ])
         self._reset_parameters()
 
         self.d_model = d_model
@@ -37,6 +43,32 @@ class WinEncoderTransformer(nn.Module):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+
+    def forward_new(self, src, pos_embed, mask, **kwargs):
+
+        memeory_list = []
+        memeory = src  # (B, C, H, W)
+        enc_win_dialation_list = self.enc_win_dialation_list
+        for idx, enc_win_size in enumerate(self.enc_win_size_list):
+
+            stride = enc_win_dialation_list[idx]
+
+            # encoder window partition
+            memeory_win, newHW = win_partion_with_dialated(memeory, (stride, stride), enc_win_size)
+            pos_embed_win, _ = win_partion_with_dialated(pos_embed, (stride, stride), enc_win_size)
+            mask_win, _ = win_partion_with_dialated(mask.unsqueeze(1), (stride, stride), enc_win_size)
+            mask_win = mask_win.squeeze(-1).permute(1, 0)
+
+            # encoder forward
+            encoder_idx = 0 if len(self.encoders) == 1 else idx
+            output = self.encoders[encoder_idx](memeory_win, src_key_padding_mask=mask_win,
+                                                pos=pos_embed_win, **kwargs)
+
+            memeory = win_unpartion_with_dialated(output, (stride, stride), enc_win_size, newHW)
+            if self.return_intermediate:
+                memeory_list.append(memeory)
+        memory_ = memeory_list if self.return_intermediate else memeory
+        return memory_
 
     def forward(self, src, pos_embed, mask, **kwargs):
         bs, c, h, w = src.shape
@@ -72,8 +104,9 @@ class WinEncoderTransformer(nn.Module):
             # memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory, pos_embed, mask, enc_win_h, enc_win_w)
 
             # encoder forward
-            output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win,
-                                                 layer_idx=idx, **kwargs)
+            encoder_idx = 0 if len(self.encoders) == 1 else idx
+            output = self.encoders[encoder_idx](memeory_win, src_key_padding_mask=mask_win,
+                                                pos=pos_embed_win, **kwargs)
 
             # reverse encoder window
             output_split_list = torch.split(output, output.shape[1] // (stride * stride), dim=1)
@@ -205,37 +238,40 @@ class TransformerEncoder(nn.Module):
         output = src
         layer = self.layers[layer_idx]
 
-        bs = output.shape[1]
-        group_num = 8  # if output.shape[0] == 512 else 128
-        if 'train' in kwargs or bs <= group_num or not kwargs['clear_cuda_cache']:
-            final_output = layer(output, src_mask=mask,
-                                 src_key_padding_mask=src_key_padding_mask, pos=pos)
-        else:
-            # 分开计算
-            num_groups = bs // group_num
-            num_left = bs % group_num
-            group_sizes = [group_num] * num_groups
-            if num_left > 0:
-                group_sizes.append(num_left)
+        final_output = layer(output, src_mask=mask,
+                             src_key_padding_mask=src_key_padding_mask, pos=pos)
 
-            output_split = torch.split(output, group_sizes, dim=1)
-            src_key_padding_mask_split = torch.split(src_key_padding_mask, group_sizes, dim=0)
-            pos_split = torch.split(pos, group_sizes, dim=1)
-            final_output = []
-            for one_output, one_src_key_padding_mask, one_pos_split in zip(output_split, src_key_padding_mask_split,
-                                                                           pos_split):
-                one_output = layer(one_output, src_mask=None,
-                                   src_key_padding_mask=one_src_key_padding_mask, pos=one_pos_split)
-                final_output.append(one_output)
-                torch.cuda.empty_cache()
-            final_output = torch.cat(final_output, dim=1)
+        # bs = output.shape[1]
+        # group_num = 8  # if output.shape[0] == 512 else 128
+        # if 'train' in kwargs or bs <= group_num or not kwargs['clear_cuda_cache']:
+        #     final_output = layer(output, src_mask=mask,
+        #                          src_key_padding_mask=src_key_padding_mask, pos=pos)
+        # else:
+        #     # 分开计算
+        #     num_groups = bs // group_num
+        #     num_left = bs % group_num
+        #     group_sizes = [group_num] * num_groups
+        #     if num_left > 0:
+        #         group_sizes.append(num_left)
+        #
+        #     output_split = torch.split(output, group_sizes, dim=1)
+        #     src_key_padding_mask_split = torch.split(src_key_padding_mask, group_sizes, dim=0)
+        #     pos_split = torch.split(pos, group_sizes, dim=1)
+        #     final_output = []
+        #     for one_output, one_src_key_padding_mask, one_pos_split in zip(output_split, src_key_padding_mask_split,
+        #                                                                    pos_split):
+        #         one_output = layer(one_output, src_mask=None,
+        #                            src_key_padding_mask=one_src_key_padding_mask, pos=one_pos_split)
+        #         final_output.append(one_output)
+        #         torch.cuda.empty_cache()
+        #     final_output = torch.cat(final_output, dim=1)
 
         return final_output
 
     def forward(self, src,
                 mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None):
+                pos: Optional[Tensor] = None, **kwargs):
 
         intermediate = []
         output = src
@@ -252,144 +288,13 @@ class TransformerEncoder(nn.Module):
         return output
 
 
-class TransformerDecoder(nn.Module):
-    """
-    Base Transformer Decoder
-    """
-
-    def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
-        super().__init__()
-        self.layers = _get_clones(decoder_layer, num_layers)
-        self.num_layers = num_layers
-        self.norm = norm
-        self.return_intermediate = return_intermediate
-
-    def forward(self, tgt, memory,
-                tgt_mask: Optional[Tensor] = None,
-                memory_mask: Optional[Tensor] = None,
-                tgt_key_padding_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None,
-                **kwargs):
-        output = tgt
-        intermediate = []
-        for idx, layer in enumerate(self.layers):
-            output = layer(output, memory, tgt_mask=tgt_mask,
-                           memory_mask=memory_mask,
-                           tgt_key_padding_mask=tgt_key_padding_mask,
-                           memory_key_padding_mask=memory_key_padding_mask,
-                           pos=pos, query_pos=query_pos)
-
-            if self.return_intermediate:
-                if self.norm is not None:
-                    intermediate.append(self.norm(output))
-                else:
-                    intermediate.append(output)
-
-        if self.norm is not None:
-            output = self.norm(output)
-            if self.return_intermediate:
-                intermediate.pop()
-                intermediate.append(output)
-
-        if self.return_intermediate:
-            return torch.stack(intermediate)
-
-        return output.unsqueeze(0)
-
-
-class EncoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=512, dropout=0.0,
-                 activation="relu"):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-
-        # feedforward layer
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.activation = _get_activation_fn(activation)
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward(self, src,
-                src_mask: Optional[Tensor] = None,
-                src_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None):
-        q = k = self.with_pos_embed(src, pos)
-        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
-        src = src + src2
-        src = self.norm1(src)
-
-        src2 = self.linear2(self.activation(self.linear1(src)))
-        src = src + src2
-        src = self.norm2(src)
-        return src
-
-
-class DecoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=512, dropout=0.0,
-                 activation="relu"):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-
-        # feedforward layer
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.activation = _get_activation_fn(activation)
-        self.nhead = nhead
-        self.d_model = d_model
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward(self, tgt, memory,
-                tgt_mask: Optional[Tensor] = None,
-                memory_mask: Optional[Tensor] = None,
-                tgt_key_padding_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None,
-                ):
-        # decoder self attention
-        q = k = self.with_pos_embed(tgt, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
-        tgt = tgt + tgt2
-        tgt = self.norm1(tgt)
-
-        # decoder cross attention
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
-        tgt = tgt + tgt2
-        tgt = self.norm2(tgt)
-
-        # feed-forward
-        tgt2 = self.linear2(self.activation(self.linear1(tgt)))
-        tgt = tgt + tgt2
-        tgt = self.norm3(tgt)
-        return tgt
-
-
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-
-
 def build_encoder(args, **kwargs):
     return WinEncoderTransformer(
         d_model=args.hidden_dim,
         dropout=args.dropout,
         nhead=args.nheads,
         dim_feedforward=args.dim_feedforward,
+        num_encoder_blocks=args.enc_blocks,
         num_encoder_layers=args.enc_layers,
         **kwargs,
     )
@@ -404,16 +309,3 @@ def build_decoder(args, **kwargs):
         num_decoder_layers=args.dec_layers,
         return_intermediate_dec=True,
     )
-
-
-def _get_activation_fn(activation):
-    """
-    Return an activation function given a string
-    """
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")

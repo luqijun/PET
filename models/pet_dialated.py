@@ -38,7 +38,6 @@ class PET(nn.Module):
         self.encode_feats = '8x'
         self.enc_win_size_list = args.enc_win_size_list  # encoder window size
         self.enc_win_dialation_list = args.enc_win_dialation_list
-        args.enc_layers = len(self.enc_win_size_list)
         self.context_encoder = build_encoder(args, enc_win_size_list=self.enc_win_size_list,
                                              enc_win_dialation_list=self.enc_win_dialation_list)
 

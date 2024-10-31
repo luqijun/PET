@@ -5,6 +5,7 @@ num_workers = 4
 syn_bn = 0
 world_size = 1
 seed = 42
+deterministic = True
 device = "cuda"
 
 lr = 1e-4
@@ -33,6 +34,8 @@ use_seg_head = False
 num_pts_per_feature = 1
 
 # 49.77 80.94
+enc_blocks = 6  # 为1时应用于所有的window
+enc_layers = 1
 enc_win_size_list = [(8, 4), (8, 4), (8, 4), (8, 4), (8, 4), (8, 4)]  # encoder window size
 enc_win_dialation_list = [4, 4, 2, 2, 1, 1]  # 长度必须和enc_win_list一致
 

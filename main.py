@@ -74,8 +74,9 @@ def main(args):
     torch.cuda.manual_seed_all(seed)
 
     # 确保所有线程使用相同的种子
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    if args.get('deterministic', False):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     # build model
     model, criterion = build_model(args)

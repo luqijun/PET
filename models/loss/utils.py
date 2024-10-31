@@ -53,7 +53,7 @@ def split_and_compute_cdist2(points1, points1_sizes, points2, points2_sizes, p=2
     for idx, (pts1, pts2) in enumerate(zip(points1_tuple, points2_tuple)):
         dist_matrix = torch.cdist(pts1, pts2, p=p)
         result[pts1_sizes[idx]:pts1_sizes[idx+1], pts2_sizes[idx]:pts2_sizes[idx+1]] = dist_matrix
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
     return result
 

@@ -1,11 +1,10 @@
 """
 PET Decoder model
 """
-import torch
 from torch import nn
 
 from .layers import *
-from .utils import expand_anchor_points
+from .utils import expand_anchor_points, points_queris_embed
 
 
 class PETDecoder(nn.Module):
@@ -34,7 +33,7 @@ class PETDecoder(nn.Module):
         # get points queries for transformer
         # generate points queries and position embedding
         query_feats, query_embed, points_queries, qH, qW = \
-            self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
+            points_queris_embed(samples, self.pq_stride, src, **kwargs)
 
         pqs = (query_feats, query_embed, points_queries, qH, qW)
 
@@ -47,42 +46,6 @@ class PETDecoder(nn.Module):
         # prediction
         outputs = self.predict(samples, points_queries, hs, **kwargs)
         return outputs
-
-    def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
-        """
-        Generate point query embedding during training
-        """
-        # dense position encoding at every pixel location
-        dense_input_embed = kwargs['dense_input_embed']
-
-        if 'level_embed' in kwargs:
-            level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
-            dense_input_embed = dense_input_embed + level_embed
-
-        # get image shape
-        input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:])
-        shape = (image_shape + stride // 2 - 1) // stride
-
-        # generate point queries
-        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
-        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
-        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
-        points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1, 0)  # 2xN --> Nx2
-        h, w = shift_x.shape
-
-        # get point queries embedding
-        query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
-        bs, c = query_embed.shape[:2]
-
-        # get point queries features, equivalent to nearest interpolation
-        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
-        query_feats = src[:, :, shift_y_down, shift_x_down]
-
-        query_embed = query_embed.view(bs, c, h, w)
-        query_feats = query_feats.view(bs, c, h, w)
-
-        return query_feats, query_embed, points_queries, h, w
 
     def predict(self, samples, points_queries, hs, **kwargs):
         """

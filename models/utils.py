@@ -2,17 +2,19 @@
 tools
 """
 
-import torch
+import copy
 import math
+
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
+
 
 def inverse_sigmoid(x, eps=1e-5):
     x = x.clamp(min=0, max=1)
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)
-    return torch.log(x1/x2)
+    return torch.log(x1 / x2)
 
 
 def _get_clones(module, N):
@@ -70,3 +72,40 @@ def expand_anchor_points(points, stride, with_origin=True):
     if with_origin:
         new_points = torch.cat([points, new_points], dim=1)
     return new_points.flatten(0, 1)
+
+
+def points_queris_embed(samples, stride=8, src=None, **kwargs):
+    """
+    Generate point query embedding during training
+    """
+    # dense position encoding at every pixel location
+    dense_input_embed = kwargs['dense_input_embed']
+
+    if 'level_embed' in kwargs:
+        level_embed = kwargs['level_embed'].view(1, -1, 1, 1)
+        dense_input_embed = dense_input_embed + level_embed
+
+    # get image shape
+    input = samples.tensors
+    image_shape = torch.tensor(input.shape[2:])
+    shape = (image_shape + stride // 2 - 1) // stride
+
+    # generate point queries
+    shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
+    shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+    shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+    points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1, 0)  # 2xN --> Nx2
+    h, w = shift_x.shape
+
+    # get point queries embedding
+    query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
+    bs, c = query_embed.shape[:2]
+
+    # get point queries features, equivalent to nearest interpolation
+    shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
+    query_feats = src[:, :, shift_y_down, shift_x_down]
+
+    query_embed = query_embed.view(bs, c, h, w)
+    query_feats = query_feats.view(bs, c, h, w)
+
+    return query_feats, query_embed, points_queries, h, w
