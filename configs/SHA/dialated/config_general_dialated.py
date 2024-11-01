@@ -15,7 +15,7 @@ clip_max_norm = 0.1
 
 # train
 lr = 0.0001
-epochs = 400
+epochs = 500
 batch_size = 8
 eval_start = 100
 eval_freq = 1
@@ -33,11 +33,11 @@ dropout = 0.0
 use_seg_head = False
 num_pts_per_feature = 1
 
-# 49.77 80.94
-enc_blocks = 6  # 为1时应用于所有的window
-enc_layers = 1
-enc_win_size_list = [(8, 4), (8, 4), (8, 4), (8, 4), (8, 4), (8, 4)]  # encoder window size
-enc_win_dialation_list = [4, 4, 2, 2, 1, 1]  # 长度必须和enc_win_list一致
+# 48.91 80.83
+enc_blocks = 3  # 为1时应用于所有的window
+enc_layers = 2
+enc_win_size_list = [(8, 4), (8, 4), (8, 4)]  # encoder window size
+enc_win_dialation_list = [4, 2, 1]  # 长度必须和enc_win_list一致
 
 # 53.13 82.14
 # enc_win_size_list = [(4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2)]  # encoder window size
