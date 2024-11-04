@@ -44,6 +44,9 @@ class WinEncoderTransformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
+    def forward(self, src, pos_embed, mask, **kwargs):
+        return self.forward_old(src, pos_embed, mask, **kwargs)
+
     def forward_new(self, src, pos_embed, mask, **kwargs):
 
         memeory_list = []
@@ -70,7 +73,7 @@ class WinEncoderTransformer(nn.Module):
         memory_ = memeory_list if self.return_intermediate else memeory
         return memory_
 
-    def forward(self, src, pos_embed, mask, **kwargs):
+    def forward_old(self, src, pos_embed, mask, **kwargs):
         bs, c, h, w = src.shape
 
         memeory_list = []
@@ -95,13 +98,10 @@ class WinEncoderTransformer(nn.Module):
                     memeory_win_list.append(memeory_win_one)
                     pos_embed_win_list.append(pos_embed_win_one)
                     mask_win_list.append(mask_win_one)
-                    # memeory_split_arr.append(mem)
 
             memeory_win = torch.cat(memeory_win_list, dim=1)
             pos_embed_win = torch.cat(pos_embed_win_list, dim=1)
             mask_win = torch.cat(mask_win_list, dim=0)
-
-            # memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory, pos_embed, mask, enc_win_h, enc_win_w)
 
             # encoder forward
             encoder_idx = 0 if len(self.encoders) == 1 else idx
@@ -114,7 +114,7 @@ class WinEncoderTransformer(nn.Module):
                                  for output_one in output_split_list]
 
             split_idx = 0
-            memeory_res = torch.full_like(memeory, fill_value=0.0)
+            memeory_res = torch.zeros_like(memeory)
             for i in range(stride):
                 for j in range(stride):
                     memeory_res[:, :, i::stride, j::stride] = output_split_list[split_idx]

@@ -38,7 +38,7 @@ def window_partition(x, window_size_h, window_size_w):
     x = x.reshape(B, H // window_size_h, window_size_h, W // window_size_w, window_size_w, C)
     windows = x.permute(0, 1, 3, 2, 4, 5).reshape(-1, window_size_h, window_size_w, C)
 
-    # window_size*window_size, num_windows*B, C
+    # window_size*window_size, B*num_windows, C
     windows = windows.reshape(-1, window_size_h * window_size_w, C).permute(1, 0, 2)
 
     return windows
@@ -67,14 +67,14 @@ def win_partion_with_dialated(src, strideHW, win_sizes):
     B, C, H, W = src.shape
     strideH, strideW = strideHW
 
-    # B*strideH*strideW, C, H, W
+    # strideH*strideW*B, C, H, W
     newH, newW = H // strideH, W // strideW
     src = src.reshape(B, C, newH, strideH, newW, strideW) \
-        .permute(0, 3, 5, 1, 2, 4).flatten(0, 2)
+        .permute(3, 5, 0, 1, 2, 4).flatten(0, 2)
 
     win_h, win_w = win_sizes
 
-    # window_size*window_size, num_windows*B, C
+    # window_size*window_size,strideH*strideW*B*num_windows, C
     src_win = window_partition(src, win_h, win_w).contiguous()
 
     return src_win, (newH, newW)
@@ -91,8 +91,8 @@ def win_unpartion_with_dialated(src_win, strideHW, win_sizes, newHW):
 
     B = src.shape[0] // strideH // strideW
     oriH, oriW = newH * strideH, newW * strideW
-    src = src.reshape(B, strideH, strideW, -1, newH, newW) \
-        .permute(0, 3, 4, 1, 5, 2).reshape(B, -1, oriH, oriW).contiguous()
+    src = src.reshape(strideH, strideW, B, -1, newH, newW) \
+        .permute(2, 3, 4, 0, 5, 1).reshape(B, -1, oriH, oriW).contiguous()
     return src
 
 
