@@ -24,7 +24,7 @@ eval_freq = 1
 model = "pet_dialated_full_split_dec"
 backbone = "vgg16_bn"
 position_embedding = "sine"  # 'sine', 'learned', 'fourier'
-# resume="outputs/SHA_General/pet_dialated_full_split_dec/pet_model_ntimes/checkpoint.pth"
+# resume = "outputs/SHA_General/pet_dialated_full_split_dec/pet_model_ntimes/checkpoint.pth"
 
 hidden_dim = 256
 dim_feedforward = 512
@@ -36,10 +36,10 @@ use_seg_level_attention = False
 
 # encoder 结构
 # 49.77 80.94
-enc_blocks = 6  # 为1时应用于所有的window
-enc_layers = 1
-enc_win_size_list = [(8, 4), (8, 4), (8, 4), (8, 4), (8, 4), (8, 4)]  # encoder window size
-enc_win_dialation_list = [4, 4, 2, 2, 1, 1]  # 长度必须和enc_win_list一致
+enc_blocks = 3  # 为1时应用于所有的window
+enc_layers = 2
+enc_win_size_list = [(8, 4), (8, 4), (8, 4)]  # encoder window size
+enc_win_dialation_list = [4, 2, 1]  # 长度必须和enc_win_list一致
 
 # 53.13 82.14
 # enc_win_list = [(4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2)]  # encoder window size
@@ -57,12 +57,12 @@ enc_win_dialation_list = [4, 4, 2, 2, 1, 1]  # 长度必须和enc_win_list一致
 # dec_win_dialation_list_4x = [2, 1]
 
 # decoder结构
-dec_blocks = 2  # 为1时应用于所有的window
-dec_layers = 1
-dec_win_size_list_8x = [(8, 4), (8, 4)]
-dec_win_dialation_list_8x = [2, 1]
-dec_win_size_list_4x = [(4, 2), (4, 2)]
-dec_win_dialation_list_4x = [2, 1]
+dec_blocks = 1  # 为1时应用于所有的window
+dec_layers = 2
+dec_win_size_list_8x = [(8, 4)]
+dec_win_dialation_list_8x = [1]
+dec_win_size_list_4x = [(4, 2)]
+dec_win_dialation_list_4x = [1]
 
 # criterion
 matcher = "matcher_with_points_weight"
@@ -72,8 +72,8 @@ ce_loss_coef = 1.0
 point_loss_coef = 0.5  # 5.0  # 0.5(48.65_80.68) # 5.0
 eos_coef = 0.5
 
-seg_head_loss_weight = 0.1
-seg_level_loss_weight = 0.1
+seg_head_loss_weight = 0.05
+seg_level_loss_weight = 0.05
 
 # dataset
 dataset_file = "SHA_General"

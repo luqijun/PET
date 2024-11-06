@@ -51,7 +51,6 @@ dec_win_size_8x = (8, 4)
 dec_win_size_4x = (4, 2)
 
 # criterion
-criterion = "criterion_multi_points"
 matcher = "matcher_with_points_weight"
 set_cost_class = 1
 set_cost_point = 0.05
