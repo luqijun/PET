@@ -10,6 +10,7 @@ from .criterion_multi_points import SetCriterion as SetCriterion_multi_points
 from .matcher import build_matcher
 from .matcher_4x1 import build_matcher as build_matcher_4x1
 from .matcher_head_size import build_matcher as build_matcher_head_size
+from .matcher_minus_poins_size import build_matcher as build_matcher_minus_poins_size
 from .matcher_preselect import build_matcher as build_matcher_pre_select
 from .matcher_preselect_with_knndist import build_matcher as build_matcher_pre_select_with_knndist
 from .matcher_with_points_weight import build_matcher as build_matcher_with_points_weight
@@ -32,6 +33,8 @@ def build_criterion(args):
             matcher = build_matcher_pre_select_with_knndist(args)
         case "matcher_head_size":
             matcher = build_matcher_head_size(args)
+        case "matcher_minus_poins_size":
+            matcher = build_matcher_minus_poins_size(args)
         case _:
             raise ValueError(f"Matcher Name not find：{matcher_name}")
 
