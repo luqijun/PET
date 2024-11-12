@@ -15,16 +15,16 @@ clip_max_norm = 0.1
 
 # train
 lr = 0.0001
-epochs = 500
+epochs = 6000
 batch_size = 8
-eval_start = 100
+eval_start = 600
 eval_freq = 1
 
 # model
 model = "pet_dialated"
 backbone = "vgg16_bn"
 position_embedding = "sine"  # 'sine', 'learned', 'fourier'
-# resume="outputs/SHA_General/pet_dialated/pet_model_ntimes/checkpoint.pth"
+resume = "outputs/SHB_General/pet_dialated/pet_model_ntimes/checkpoint.pth"
 dec_layers = 2
 hidden_dim = 256
 dim_feedforward = 512
@@ -72,8 +72,8 @@ seg_head_loss_weight = 0.1
 seg_level_loss_weight = 0.1
 
 # dataset
-dataset_file = "SHA_General"
-data_path = "./data/ShanghaiTech/part_A/"
+dataset_file = "SHB_General"
+data_path = "./data/ShanghaiTech/part_B/"
 output_dir = "pet_model"
 head_sizes_folder = "images_head_size_by_depth_var"
 seg_level_folder = "images_depth"

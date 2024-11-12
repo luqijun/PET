@@ -5,9 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       get_world_size, is_dist_avail_and_initialized)
-import math
+from util.misc import (get_world_size, is_dist_avail_and_initialized)
 
 
 class SetCriterion(nn.Module):
@@ -117,7 +115,8 @@ class SetCriterion(nn.Module):
 
         # loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
         # loss_points_raw = loss_points_raw * points_outer_mask.float().unsqueeze(-1)
-        loss_points_raw = self.smooth_l1_loss(src_points, target_points, (head_size_range / img_h).unsqueeze(-1), reduction='none') # F.smooth_l1_loss(src_points, target_points, reduction='none')
+        loss_points_raw = self.smooth_l1_loss(src_points, target_points, (head_size_range / img_h).unsqueeze(-1),
+                                              reduction='none')  # F.smooth_l1_loss(src_points, target_points, reduction='none')
 
         # 使用深度权重
         # depth_weights = torch.cat([v["depth_weight"] for v in targets], dim=1).permute(1, 0) * 25
@@ -145,7 +144,7 @@ class SetCriterion(nn.Module):
             # loss on non-div regions
             non_div_mask = split_map <= div_thrs
             loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
-                        non_div_mask[idx].sum() + eps)
+                    non_div_mask[idx].sum() + eps)
 
             # final point loss
             losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
@@ -201,7 +200,7 @@ class SetCriterion(nn.Module):
 
         # compute the average number of target points accross all nodes, for normalization purposes
         num_points = sum(len(t["labels"]) for t in targets)
-        num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_points = torch.as_tensor([num_points], dtype=torch.float, device=outputs['pred_points'].device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_points)
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()

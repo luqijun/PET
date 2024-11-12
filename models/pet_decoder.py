@@ -7,25 +7,36 @@ from .layers import *
 from .utils import expand_anchor_points, points_queris_embed
 
 
+def zero_init(m):
+    if isinstance(m, nn.Linear):
+        nn.init.zeros_(m.weight)
+        nn.init.zeros_(m.bias)
+
+
 class PETDecoder(nn.Module):
     """ 
     Base PET model
     """
 
-    def __init__(self, backbone, num_classes, quadtree_layer='sparse', args=None, **kwargs):
+    def __init__(self, num_classes, quadtree_layer='sparse', args=None, **kwargs):
         super().__init__()
-        self.backbone = backbone
-        self.transformer = kwargs['transformer']
         self.num_pts_per_feature = args.get('num_pts_per_feature', 1)
         hidden_dim = args.hidden_dim
 
         self.class_embed = nn.Linear(hidden_dim, (num_classes + 1) * self.num_pts_per_feature)
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2 * self.num_pts_per_feature, 3)
+        # self.coord_embed.apply(zero_init)
+
+        # 预测头部大小
+        self.use_pred_head_sizes = args.get('use_pred_head_sizes', False)
+        if self.use_pred_head_sizes:
+            self.sizes_embed = MLP(hidden_dim, hidden_dim, 1, 3)
+            self.sizes_embed.apply(zero_init)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
 
-    def forward(self, samples, features, context_info, **kwargs):
+    def forward(self, transformer, samples, features, context_info, **kwargs):
         encode_src, src_pos_embed, mask = context_info
 
         src, _ = features[self.feat_name].decompose()
@@ -40,8 +51,8 @@ class PETDecoder(nn.Module):
         # point querying
         kwargs['pq_stride'] = self.pq_stride
         kwargs['query_hw'] = (qH, qW)
-        hs, points_queries = self.transformer(encode_src, src_pos_embed, mask, pqs,
-                                              img_shape=samples.tensors.shape[-2:], **kwargs)
+        hs, points_queries = transformer(encode_src, src_pos_embed, mask, pqs,
+                                         img_shape=samples.tensors.shape[-2:], **kwargs)
 
         # prediction
         outputs = self.predict(samples, points_queries, hs, **kwargs)
@@ -75,8 +86,16 @@ class PETDecoder(nn.Module):
             outputs_offsets[..., 1] /= (img_w / 256)
 
         outputs_points = outputs_offsets[-1] + points_queries
-        out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape,
-               'pred_offsets': outputs_offsets[-1]}
+        out = {
+            'img_shape': img_shape,
+            'pred_logits': outputs_class[-1],
+            'pred_points': outputs_points,
+            'pred_offsets': outputs_offsets[-1]
+        }
+
+        if self.use_pred_head_sizes:
+            outputs_sizes = self.sizes_embed(hs)
+            out['pred_sizes'] = outputs_sizes[-1]
 
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride

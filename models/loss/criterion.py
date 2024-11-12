@@ -5,9 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       get_world_size, is_dist_avail_and_initialized)
-import math
+from util.misc import (get_world_size, is_dist_avail_and_initialized)
 
 
 class SetCriterion(nn.Module):
@@ -128,12 +126,60 @@ class SetCriterion(nn.Module):
             # loss on non-div regions
             non_div_mask = split_map <= div_thrs
             loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (
-                        non_div_mask[idx].sum() + eps)
+                    non_div_mask[idx].sum() + eps)
 
             # final point loss
             losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
         else:
             losses['loss_points'] = loss_points_raw.sum() / num_points
+
+        return losses
+
+    def loss_sizes(self, outputs, targets, indices, num_points, **kwargs):
+        """
+        SmoothL1 regression loss:
+           - targets dicts must contain the key "points" containing a tensor of dim [nb_target_points, 2]
+        """
+        assert 'pred_points' in outputs
+        # get indices
+        idx = self._get_src_permutation_idx(indices)
+        src_sizes = outputs['pred_sizes'][idx].squeeze(-1)
+        target_sizes = torch.cat([t['head_sizes'][i] for t, (_, i) in zip(targets, indices)], dim=0)  # (n, )
+
+        # compute regression loss
+        losses = {}
+        img_shape = outputs['img_shape']
+        img_h, img_w = img_shape
+        target_sizes /= img_h
+        loss_sizes_raw = F.smooth_l1_loss(src_sizes, target_sizes, reduction='none')
+
+        if 'div' in kwargs and kwargs['div'] is not None:
+            # get sparse / dense index
+            den = torch.tensor([target['density'] for target in targets])
+            den_sort = torch.sort(den)[1]
+            img_ds_idx = den_sort[:len(den_sort) // 2]
+            img_sp_idx = den_sort[len(den_sort) // 2:]
+            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
+            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
+
+            # dual supervision for sparse/dense images
+            eps = 1e-5
+            split_map = kwargs['div']
+            div_thrs = self.div_thrs_dict[outputs['pq_stride']]
+            div_mask = split_map > div_thrs
+            loss_sizes_div = loss_sizes_raw * div_mask[idx]
+            loss_sizes_div_sp = loss_sizes_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
+            loss_sizes_div_ds = loss_sizes_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
+
+            # loss on non-div regions
+            non_div_mask = split_map <= div_thrs
+            loss_sizes_nondiv = (loss_sizes_raw * non_div_mask[idx]).sum() \
+                                / (non_div_mask[idx].sum() + eps)
+
+            # final point loss
+            losses['loss_sizes'] = loss_sizes_div_sp + loss_sizes_div_ds + loss_sizes_nondiv
+        else:
+            losses['loss_sizes'] = loss_sizes_raw.sum() / num_points
 
         return losses
 
@@ -153,6 +199,7 @@ class SetCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'points': self.loss_points,
+            'sizes': self.loss_sizes
         }
         assert loss in loss_map, f'{loss} loss is not defined'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
@@ -169,7 +216,7 @@ class SetCriterion(nn.Module):
 
         # compute the average number of target points accross all nodes, for normalization purposes
         num_points = sum(len(t["labels"]) for t in targets)
-        num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_points = torch.as_tensor([num_points], dtype=torch.float, device=outputs['pred_points'].device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_points)
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()

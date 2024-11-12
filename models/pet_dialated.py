@@ -58,18 +58,10 @@ class PET(nn.Module):
 
         # point-query quadtree
         args.sparse_stride, args.dense_stride = 8, 4  # point-query stride
-        transformer = build_decoder(args)
-        self.quadtree_sparse = PETDecoder(backbone, num_classes, quadtree_layer='sparse', args=args,
-                                          transformer=transformer)
-        self.quadtree_dense = PETDecoder(backbone, num_classes, quadtree_layer='dense', args=args,
-                                         transformer=transformer)
+        self.transformer_decoder = build_decoder(args)
+        self.quadtree_sparse = PETDecoder(num_classes, quadtree_layer='sparse', args=args)
+        self.quadtree_dense = PETDecoder(num_classes, quadtree_layer='dense', args=args)
 
-        # depth adapt
-        self.adapt_pos1d = nn.Sequential(
-            nn.Linear(backbone.num_channels, backbone.num_channels),
-            nn.ReLU(),
-            nn.Linear(backbone.num_channels, backbone.num_channels),
-        )
         self.seg_level_split_th = args.seg_level_split_th
         self.warmup_ep = args.get("warmup_ep", 5)
 
@@ -77,7 +69,16 @@ class PET(nn.Module):
         self.level_embed = nn.Parameter(
             torch.Tensor(2, backbone.num_channels))
 
+        self.learn_to_scale = args.get('learn_to_scale', False)
+        if self.learn_to_scale:
+            self.scale_head = nn.Sequential(
+                nn.Conv2d(hidden_dim, hidden_dim, 3, 1, padding=1),
+                nn.Conv2d(hidden_dim, 1, 1),
+                nn.ReLU(),
+            )
+
         self.bce_loss = nn.BCELoss()
+        self.l1_loss = nn.L1Loss()
         normal_(self.level_embed)
 
     def forward(self, samples: NestedTensor, **kwargs):
@@ -163,8 +164,17 @@ class PET(nn.Module):
         clear_cuda_cache = self.args.get("clear_cuda_cache", False)
         kwargs['clear_cuda_cache'] = clear_cuda_cache
 
-        outputs = dict(seg_map=None)
+        outputs = dict(seg_map=None, scale_map=None)
         fea_x8 = features['8x'].tensors
+
+        # apply scale factors
+        if self.learn_to_scale:
+            scale_map = self.scale_head(fea_x8)
+            pred_scale_map_4x = F.interpolate(scale_map, size=features['4x'].tensors.shape[-2:])
+            pred_scale_map_8x = F.interpolate(scale_map, size=features['8x'].tensors.shape[-2:])
+            features['4x'].tensors = features['4x'].tensors * pred_scale_map_4x
+            features['8x'].tensors = features['8x'].tensors * pred_scale_map_8x
+            outputs['scale_map'] = scale_map
 
         # apply seg head
         if self.use_seg_head:
@@ -181,6 +191,7 @@ class PET(nn.Module):
         assert mask is not None
 
         encode_src = self.context_encoder(src, src_pos_embed, mask, **kwargs)
+
         context_info = (encode_src, src_pos_embed, mask)
 
         # apply quadtree splitter
@@ -197,7 +208,7 @@ class PET(nn.Module):
             kwargs['level_embed'] = self.level_embed[0]
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size'] = self.args.dec_win_size_8x  # [8, 4]
-            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+            outputs_sparse = self.quadtree_sparse(self.transformer_decoder, samples, features, context_info, **kwargs)
             outputs_sparse['fea_shape'] = features['8x'].tensors.shape[-2:]
         else:
             outputs_sparse = None
@@ -208,7 +219,7 @@ class PET(nn.Module):
             kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
             kwargs['dec_win_size'] = self.args.dec_win_size_4x  # [4, 2]
-            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            outputs_dense = self.quadtree_dense(self.transformer_decoder, samples, features, context_info, **kwargs)
             outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
         else:
             outputs_dense = None
@@ -262,6 +273,34 @@ class PET(nn.Module):
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
+
+        # scale map loss
+        if self.learn_to_scale:
+            pred_scale_map = outputs['scale_map']
+            scale_map_h, scale_map_w = pred_scale_map.shape[-2:]
+            scale_values_list = []
+            for batch_idx, tgt in enumerate(targets):
+                pts = (tgt['points'] // 8).long()
+                pts = torch.clamp(pts, max=scale_map_h - 1, min=0)
+                scale_values = pred_scale_map[batch_idx, :, pts[:, 0], pts[:, 1]]
+                scale_values_list.append(scale_values.squeeze(0))
+            pred_scale_values = torch.cat(scale_values_list, dim=0)
+            tgt_scale_values = 1 / torch.cat([tgt['head_sizes'] for tgt in targets], dim=0)
+
+            loss_scale_values = self.l1_loss(pred_scale_values, tgt_scale_values)
+            losses += loss_scale_values * 0.1
+            loss_dict['loss_scale_values'] = loss_scale_values * 0.1
+
+            # gt_scale_map = torch.stack([tgt['seg_level_map'] for tgt in targets], dim=0)
+            # # resize seg map
+            # if gt_scale_map.shape[-1] < pred_scale_map.shape[-1]:
+            #     gt_scale_map = F.interpolate(gt_scale_map, size=pred_scale_map.shape[-2:])
+            # else:
+            #     pred_scale_map = F.interpolate(pred_scale_map, size=gt_scale_map.shape[-2:])
+            #
+            # loss_scale_map = self.l1_loss(pred_scale_map.float().squeeze(1), gt_scale_map.float().squeeze(1))
+            # losses += loss_scale_map * 0.1
+            # loss_dict['loss_scale_map'] = loss_scale_map * 0.1
 
         # seg head loss
         if self.use_seg_head:

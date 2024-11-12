@@ -4,12 +4,15 @@ Modules to compute bipartite matching
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from .utils import split_and_compute_cdist
+
+from .utils import split_and_compute_cdist2
+
 
 class HungarianMatcher(nn.Module):
     """
     This class computes an assignment between the targets and the predictions of the network
     """
+
     def __init__(self, cost_class: float = 1, cost_point: float = 1):
         """
         Params:
@@ -23,7 +26,7 @@ class HungarianMatcher(nn.Module):
 
     @torch.no_grad()
     def forward(self, outputs, targets, **kwargs):
-        """ 
+        """
         Performs the matching
 
         Params:
@@ -48,12 +51,14 @@ class HungarianMatcher(nn.Module):
         # flatten to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
         out_points = outputs["pred_points"].flatten(0, 1)  # [batch_size * num_queries, 2]
-        out_head_sizes = outputs['pred_head_sizes'].flatten(0, 1)
+        out_sizes = outputs['pred_sizes'].flatten(0, 1)
+        out_bs = [outputs["pred_points"].shape[1]] * bs
 
         # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_points = torch.cat([v["points"] for v in targets])
-        tgt_head_sizes = torch.cat([v["head_sizes"] for v in targets]).unsqueeze(-1)
+        tgt_points = torch.cat([v["points"] for v in targets]).float()
+        tgt_sizes = torch.cat([v["head_sizes"] for v in targets]).unsqueeze(-1).float()
+        tgt_bs = [len(v["points"]) for v in targets]
         match_point_weights = torch.cat([v["match_point_weight"] for v in targets], dim=1)
 
         # compute the classification cost, i.e., - prob[target class]
@@ -62,13 +67,16 @@ class HungarianMatcher(nn.Module):
         # compute the L2 cost between points
         img_h, img_w = outputs['img_shape']
         out_points_abs = out_points.clone()
-        out_points_abs[:,0] *= img_h
-        out_points_abs[:,1] *= img_w
-        cost_point = split_and_compute_cdist(out_points_abs, tgt_points, n=bs, p=2)
-        cost_head_sizes = split_and_compute_cdist(out_head_sizes * 256, tgt_head_sizes, p=2)
+        out_points_abs[:, 0] *= img_h
+        out_points_abs[:, 1] *= img_w
+        out_sizes *= img_h
+
+        cost_point = split_and_compute_cdist2(out_points_abs, out_bs, tgt_points, tgt_bs, p=2)
+        cost_size = split_and_compute_cdist2(out_sizes, out_bs, tgt_sizes, tgt_bs, p=2)
+        # cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix
-        C = (cost_point + cost_head_sizes) * match_point_weights + self.cost_class * cost_class
+        C = (cost_point + cost_size) * match_point_weights + self.cost_class * cost_class
         # C = cost_point * self.cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 

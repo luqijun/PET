@@ -1,5 +1,6 @@
 import torch
 
+
 def split_and_compute_cdist(points1, points2, n=1, p=2):
     """
     将 points1 分成 n 份，分别与 points2 计算距离，最后将结果合并返回。
@@ -26,11 +27,10 @@ def split_and_compute_cdist(points1, points2, n=1, p=2):
         dist_matrix = torch.cdist(batch_points1, points2, p=p)
         result[start_idx:end_idx] = dist_matrix
         start_idx = end_idx
-        torch.cuda.empty_cache()
+        if i >= 8:
+            torch.cuda.empty_cache()
 
     return result.to(points1.device)
-
-
 
 
 def split_and_compute_cdist2(points1, points1_sizes, points2, points2_sizes, p=2):
@@ -52,9 +52,8 @@ def split_and_compute_cdist2(points1, points1_sizes, points2, points2_sizes, p=2
     pts2_sizes = torch.cumsum(torch.tensor([0] + points2_sizes), dim=0)
     for idx, (pts1, pts2) in enumerate(zip(points1_tuple, points2_tuple)):
         dist_matrix = torch.cdist(pts1, pts2, p=p)
-        result[pts1_sizes[idx]:pts1_sizes[idx+1], pts2_sizes[idx]:pts2_sizes[idx+1]] = dist_matrix
-        # torch.cuda.empty_cache()
+        result[pts1_sizes[idx]:pts1_sizes[idx + 1], pts2_sizes[idx]:pts2_sizes[idx + 1]] = dist_matrix
+        if idx >= 8:
+            torch.cuda.empty_cache()
 
     return result
-
-

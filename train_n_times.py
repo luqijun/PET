@@ -1,9 +1,14 @@
-import subprocess
+import argparse
+import os
 import re
 import shutil
-import os
-import argparse
+import subprocess
+from time import strftime, localtime
+
 from mmengine.config import Config
+
+start_time = strftime('%m_%d_%H', localtime())
+
 
 def main():
     # 创建 ArgumentParser 对象
@@ -28,8 +33,8 @@ def main():
     dataset_file = cfg.dataset_file
     sub_save_dir = cfg.get('sub_save_dir', '')
     folder = os.path.join("outputs", dataset_file, cfg.model, sub_save_dir)
-    output_dir = os.path.join(folder, args.output_dir) # 输出目录
-    result_dir =os.path.join(folder, args.result_dir) # 结果目录
+    output_dir = os.path.join(folder, args.output_dir)  # 输出目录
+    result_dir = os.path.join(folder, args.result_dir)  # 结果目录
 
     # 确保结果目录存在
     if not os.path.exists(result_dir):
@@ -44,14 +49,15 @@ def main():
         print(f'Executing iteration {i + 1}...')
 
         # 执行sh脚本并重定向输出到当前控制台
-        process = subprocess.Popen(['bash', sh_script, cfg_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(['bash', sh_script, cfg_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True)
 
         # 读取输出并提取“best mae”和“best mse”
         mae = 0
         mse = 0
         for line in process.stdout:
             print(line, end='')
-            if "ERROR:" in line:
+            if "ERROR:" in line or "errors." in line:
                 has_error = True
             mae_match = mae_pattern.search(line)
             mse_match = mse_pattern.search(line)
@@ -69,7 +75,7 @@ def main():
         # 检查输出目录是否存在
         if os.path.exists(output_dir):
             # 复制输出目录到结果目录并重命名
-            new_output_dir = os.path.join(result_dir, f'outputs_{i + 1}_{mae:.2f}_{mse:.2f}')
+            new_output_dir = os.path.join(result_dir, f'{start_time}_{i + 1}_{mae:.2f}_{mse:.2f}')
             # if os.path.exists(new_output_dir):
             #     shutil.rmtree(new_output_dir)
             shutil.copytree(output_dir, new_output_dir)
@@ -78,6 +84,7 @@ def main():
             print(f'Output directory {output_dir} does not exist')
 
         # 输出提取的“best mae”和“best mse”
+
         if mae and mse:
             print(f'======Iteration {i + 1} - best mae: {mae:.2f}, best mse: {mse:.2f}=========')
         else:
@@ -86,6 +93,7 @@ def main():
         print('\n\n')
 
     print('All iterations completed.')
+
 
 if __name__ == "__main__":
     main()
