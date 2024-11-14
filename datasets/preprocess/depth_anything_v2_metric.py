@@ -1,8 +1,7 @@
-import cv2
-import torch
-import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
+import torch
+
 from DepthAnythingV2.metric_depth.depth_anything_v2.dpt import DepthAnythingV2
 
 # 设置 matplotlib 使用 Agg 后端
@@ -16,27 +15,27 @@ model_configs = {
     'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]}
 }
 
-encoder = 'vitl' # or 'vits', 'vitb'
-dataset = 'vkitti' # 'hypersim' for indoor model, 'vkitti' for outdoor model
-max_depth = 80 # 20 for indoor model, 80 for outdoor model
+encoder = 'vitl'  # or 'vits', 'vitb'
+dataset = 'vkitti'  # 'hypersim' for indoor model, 'vkitti' for outdoor model
+max_depth = 80  # 20 for indoor model, 80 for outdoor model
 
-model = None
 
 def load_depth_model():
-    global model
-    if model == None:
-        model = DepthAnythingV2(**{**model_configs[encoder], 'max_depth': max_depth})
-        model.load_state_dict(torch.load(f'checkpoints/depth_anything_v2_metric_{dataset}_{encoder}.pth', map_location='cpu'))
-        model = model.to(DEVICE).eval()
+    model = DepthAnythingV2(**{**model_configs[encoder], 'max_depth': max_depth})
+    model.load_state_dict(
+        torch.load(f'checkpoints/depth_anything_v2_metric_{dataset}_{encoder}.pth',
+                   map_location='cpu'))
+    model = model.to(DEVICE).eval()
 
-def generate_depth_map(raw_img):
-    global model
-    assert model != None
-    depth_map = model.infer_image(raw_img) # HxW raw depth map in numpy
+    return model
+
+
+def generate_depth_map(model, raw_img):
+    depth_map = model.infer_image(raw_img)  # HxW raw depth map in numpy
     return depth_map
 
-def save_depth_map(depth_map, save_path:str, title:str):
 
+def save_depth_map(depth_map, save_path: str, title: str):
     # 可视化深度图
     plt.figure(figsize=(8, 6))
     plt.imshow(depth_map, cmap='viridis', vmin=0.0, vmax=1.0)  # 使用viridis颜色映射
@@ -49,14 +48,14 @@ def save_depth_map(depth_map, save_path:str, title:str):
     plt.close()
 
 
-def save_thresholded_depth_map(depth_map, save_path:str, title:str, thresholds):
+def save_thresholded_depth_map(depth_map, save_path: str, title: str, thresholds):
     """
     根据给定的阈值绘制分割图，最后将原始图像和分割图放在一行上显示。
     """
 
     # 创建一个1行(len(thresholds) + 1)列的子图布局
     fig, axs = plt.subplots(1, len(thresholds) + 1, figsize=(15, 5))
-    fig.patch.set_facecolor('#f0f0f0') # 设置整个图形的背景颜色
+    fig.patch.set_facecolor('#f0f0f0')  # 设置整个图形的背景颜色
 
     # 显示原始图像
     im = axs[0].imshow(depth_map, cmap='viridis', vmin=0.0, vmax=1.0)
