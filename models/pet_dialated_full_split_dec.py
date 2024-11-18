@@ -59,11 +59,9 @@ class PET(nn.Module):
 
         # point-query quadtree
         args.sparse_stride, args.dense_stride = 8, 4  # point-query stride
-        transformer = build_decoder(args)
-        self.quadtree_sparse = PETDecoder(backbone, num_classes, quadtree_layer='sparse', args=args,
-                                          transformer=transformer)
-        self.quadtree_dense = PETDecoder(backbone, num_classes, quadtree_layer='dense', args=args,
-                                         transformer=transformer)
+        self.transformer = build_decoder(args)
+        self.quadtree_sparse = PETDecoder(num_classes, quadtree_layer='sparse', args=args)
+        self.quadtree_dense = PETDecoder(num_classes, quadtree_layer='dense', args=args)
 
         self.seg_level_split_th = args.seg_level_split_th
         self.warmup_ep = args.get("warmup_ep", 5)
@@ -209,7 +207,7 @@ class PET(nn.Module):
             kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
             kwargs['dec_win_size_list'] = self.args.dec_win_size_list_8x  # [8, 4]
             kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_8x
-            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+            outputs_sparse = self.quadtree_sparse(self.transformer, samples, features, context_info, **kwargs)
             outputs_sparse['fea_shape'] = features['8x'].tensors.shape[-2:]
         else:
             outputs_sparse = None
@@ -222,7 +220,7 @@ class PET(nn.Module):
 
             kwargs['dec_win_size_list'] = self.args.dec_win_size_list_4x  # // 2 # [4, 2]
             kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_4x
-            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            outputs_dense = self.quadtree_dense(self.transformer, samples, features, context_info, **kwargs)
             outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
         else:
             outputs_dense = None

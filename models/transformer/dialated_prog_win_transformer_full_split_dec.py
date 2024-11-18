@@ -44,7 +44,7 @@ class WinDecoderTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
-        return self.forward_old(src, pos_embed, mask, pqs, **kwargs)
+        return self.forward_new(src, pos_embed, mask, pqs, **kwargs)
 
     def forward_new(self, src, pos_embed, mask, pqs, **kwargs):
 
@@ -70,29 +70,70 @@ class WinDecoderTransformer(nn.Module):
             mem_mask_win, _ = win_partion_with_dialated(mask.unsqueeze(1), (stride, stride), mem_dec_win_size)
             mem_mask_win = mem_mask_win.squeeze(-1).permute(1, 0).contiguous()
 
-            # if not is_train:
-            #     div_win, _ = win_partion_with_dialated(div.unsqueeze(1), (stride, stride), dec_win_size)
-            #
-            #     valid_div = (div_win > thrs).sum(dim=0)[:, 0]
-            #     v_idx = valid_div > 0
-            #
-            #     tgt_win = tgt_win[:, v_idx]
-            #     tgt_pos_win = tgt_pos_win[:, v_idx]
-            #     mem_win = mem_win[:, v_idx]
-            #     mem_pos_win = mem_pos_win[:, v_idx]
-            #     mem_mask_win = mem_mask_win[v_idx, ...]
-            #
-            #     # 调整anchor_points
-            #     if idx == len(dec_win_size_list) - 1:
-            #         points_queries = points_queries.reshape(qH, qW, 2).permute(2, 0, 1).unsqueeze(0)
-            #         points_queries_win, _ = win_partion_with_dialated(points_queries, (stride, stride), dec_win_size)
-            #         points_queries_win = points_queries_win.to(v_idx.device)
-            #         points_queries = points_queries_win[:, v_idx].reshape(-1, 2)
+            if not is_train:
+                div_win, _ = win_partion_with_dialated(div.unsqueeze(1), (stride, stride), dec_win_size)
+
+                valid_div = (div_win > thrs).sum(dim=0)[:, 0]
+                v_idx = valid_div > 0
+
+                tgt_win = tgt_win[:, v_idx]
+                tgt_pos_win = tgt_pos_win[:, v_idx]
+                mem_win = mem_win[:, v_idx]
+                mem_pos_win = mem_pos_win[:, v_idx]
+                mem_mask_win = mem_mask_win[v_idx, ...]
+
+                # 调整anchor_points
+                if idx == len(dec_win_size_list) - 1:
+                    points_queries = points_queries.reshape(qH, qW, 2).permute(2, 0, 1).unsqueeze(0)
+                    points_queries_win, _ = win_partion_with_dialated(points_queries, (stride, stride), dec_win_size)
+                    points_queries_win = points_queries_win.to(v_idx.device)
+                    points_queries = points_queries_win[:, v_idx].reshape(-1, 2)
 
             decoder_idx = 0 if len(self.decoders) == 1 else idx
             hs_win = self.decoders[decoder_idx](tgt_win, mem_win, memory_key_padding_mask=mem_mask_win,
                                                 pos=mem_pos_win, query_pos=tgt_pos_win, **kwargs)
+            hs_win = hs_win[-1]
 
+            if is_train:
+                # B, C, H, W
+                query_feats = win_unpartion_with_dialated(hs_win, (stride, stride), dec_win_size, qHW)
+                hs = query_feats.flatten(-2).transpose(1, 2).unsqueeze(0)
+            else:
+                num_elm, num_win, dim = hs_win.shape
+                hs = hs_win.reshape(1, num_elm * num_win, dim).unsqueeze(0)
+
+            hs_intermediate_list.append(hs)
+
+        hs_res = hs_intermediate_list[-1]
+        return hs_res, points_queries
+
+    def forward_new_no_split(self, src, pos_embed, mask, pqs, **kwargs):
+
+        query_feats, query_embed, points_queries, qH, qW = pqs
+
+        is_train = 'train' in kwargs
+        dec_win_size_list = kwargs['dec_win_size_list']
+        dec_win_dialation_list = kwargs['dec_win_dialation_list']
+        div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
+
+        hs_intermediate_list = []
+        for idx, (dec_win_size, stride) in enumerate(zip(dec_win_size_list, dec_win_dialation_list)):
+            thrs = 0.5
+            div = kwargs['div']
+
+            # B, C, H, W = query_feats.shape
+            tgt_win, qHW = win_partion_with_dialated(query_feats, (stride, stride), dec_win_size)
+            tgt_pos_win, _ = win_partion_with_dialated(query_embed, (stride, stride), dec_win_size)
+
+            mem_dec_win_size = (dec_win_size[0] // div_ratio, dec_win_size[1] // div_ratio)
+            mem_win, _ = win_partion_with_dialated(src, (stride, stride), mem_dec_win_size)
+            mem_pos_win, _ = win_partion_with_dialated(pos_embed, (stride, stride), mem_dec_win_size)
+            mem_mask_win, _ = win_partion_with_dialated(mask.unsqueeze(1), (stride, stride), mem_dec_win_size)
+            mem_mask_win = mem_mask_win.squeeze(-1).permute(1, 0).contiguous()
+
+            decoder_idx = 0 if len(self.decoders) == 1 else idx
+            hs_win = self.decoders[decoder_idx](tgt_win, mem_win, memory_key_padding_mask=mem_mask_win,
+                                                pos=mem_pos_win, query_pos=tgt_pos_win, **kwargs)
             hs_win = hs_win[-1]
 
             query_feats = win_unpartion_with_dialated(hs_win, (stride, stride), dec_win_size, qHW)
@@ -104,14 +145,6 @@ class WinDecoderTransformer(nn.Module):
                 hs = hs[:, :, valid_div, :]
                 points_queries = points_queries.to(valid_div.device)
                 points_queries = points_queries[valid_div, :]
-
-            # if is_train:
-            #     # B, C, H, W
-            #     query_feats = win_unpartion_with_dialated(hs_win, (stride, stride), dec_win_size, qHW)
-            #     hs = query_feats.flatten(-2).transpose(1, 2).unsqueeze(0)
-            # else:
-            #     num_elm, num_win, dim = hs_win.shape
-            #     hs = hs_win.reshape(1, num_elm * num_win, dim).unsqueeze(0)
 
             hs_intermediate_list.append(hs)
 

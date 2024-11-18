@@ -30,7 +30,7 @@ def split_and_compute_cdist(points1, points2, n=1, p=2):
         result[start_idx:end_idx] = dist_matrix
         start_idx = end_idx
         if i >= 8:
-            check_and_clear_memory()
+            check_and_clear_memory(0.9)
 
     return result.to(points1.device)
 
@@ -56,6 +56,6 @@ def split_and_compute_cdist2(points1, points1_sizes, points2, points2_sizes, p=2
         dist_matrix = torch.cdist(pts1, pts2, p=p)
         result[pts1_sizes[idx]:pts1_sizes[idx + 1], pts2_sizes[idx]:pts2_sizes[idx + 1]] = dist_matrix
         if idx >= 8:
-            check_and_clear_memory()
+            check_and_clear_memory(0.9)
 
     return result

@@ -45,7 +45,7 @@ class WinEncoderTransformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, pos_embed, mask, **kwargs):
-        return self.forward_old(src, pos_embed, mask, **kwargs)
+        return self.forward_new(src, pos_embed, mask, **kwargs)
 
     def forward_new(self, src, pos_embed, mask, **kwargs):
 

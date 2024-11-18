@@ -72,7 +72,7 @@ def win_partion_with_dialated(src, strideHW, win_sizes):
     src = src.reshape(B, C, newH, strideH, newW, strideW) \
         .permute(3, 5, 0, 1, 2, 4).flatten(0, 2)
 
-    win_h, win_w = win_sizes
+    win_w, win_h = win_sizes
 
     # window_size*window_size,strideH*strideW*B*num_windows, C
     src_win = window_partition(src, win_h, win_w).contiguous()
@@ -81,12 +81,12 @@ def win_partion_with_dialated(src, strideHW, win_sizes):
 
 
 def win_unpartion_with_dialated(src_win, strideHW, win_sizes, newHW):
-    win_h, win_w = win_sizes
+    win_w, win_h = win_sizes
 
     newH, newW = newHW
     strideH, strideW = strideHW
 
-    # B*strideH*strideW, C, H, W
+    # strideH*strideW*B, C, H, W
     src = window_unpartition(src_win, win_h, win_w, newH, newW)
 
     B = src.shape[0] // strideH // strideW
