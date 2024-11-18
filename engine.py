@@ -13,6 +13,7 @@ import torch
 import torchvision.transforms as standard_transforms
 
 import util.misc as utils
+from util.misc import check_and_clear_memory
 
 
 class DeNormalize(object):
@@ -105,10 +106,14 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
     print_freq = 10
 
     is_train_one = args.get("is_train_one", False)
+    clear_cuda_cache = args.get('clear_cuda_cache', False)
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        gt_points = [target['points'] for target in targets]
+
+        # 清缓存
+        if clear_cuda_cache:
+            check_and_clear_memory()
 
         outputs = model(samples, epoch=epoch, train=True,
                         criterion=criterion, targets=targets)
@@ -151,7 +156,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
 
 # evaluation
 @torch.no_grad()
-def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
+def evaluate(args, model, data_loader, device, epoch=0, vis_dir=None):
     model.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -161,9 +166,14 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         os.makedirs(vis_dir, exist_ok=True)
 
     print_freq = 10
+    clear_cuda_cache = args.get('clear_cuda_cache', False)
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         img_h, img_w = samples.tensors.shape[-2:]
+
+        # 清缓存
+        if clear_cuda_cache:
+            check_and_clear_memory()
 
         # inference
         outputs = model(samples, test=True, targets=targets)

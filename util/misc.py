@@ -430,3 +430,29 @@ def init_distributed_mode(args):
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
+
+
+def check_and_clear_memory(threshold=0.8):
+    # 获取当前设备
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if device.type == "cuda":
+        # 获取当前显存使用情况
+        allocated_memory = torch.cuda.memory_allocated(device)
+        cached_memory = torch.cuda.memory_cached(device)
+
+        # 获取显卡的总显存
+        total_memory = torch.cuda.get_device_properties(device).total_memory
+
+        # 计算当前显存使用占总显存的比例
+        memory_usage_ratio = (allocated_memory + cached_memory) / total_memory
+
+        # 判断是否超过阈值
+        if memory_usage_ratio > threshold:
+            print(f"Current memory usage: {memory_usage_ratio * 100:.2f}% "
+                  f"(cached_memory--{cached_memory / total_memory * 100:.2f})")
+            print("Memory usage exceeds threshold, clearing cache...")
+            torch.cuda.empty_cache()
+            print("Cache cleared.")
+    else:
+        print("No GPU available.")

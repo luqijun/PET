@@ -1,16 +1,12 @@
 import argparse
 import random
-from pathlib import Path
-import os
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, DistributedSampler
 
-import datasets
-from datasets import build_dataset
 import util.misc as utils
+from datasets import build_dataset
 from engine import evaluate
 from models import build_model
 
@@ -35,7 +31,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    
+
     # loss parameters
     # - matcher
     parser.add_argument('--set_cost_class', default=1, type=float,
@@ -43,10 +39,10 @@ def get_args_parser():
     parser.add_argument('--set_cost_point', default=0.05, type=float,
                         help="SmoothL1 point coefficient in the matching cost")
     # - loss coefficients
-    parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
-    parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
+    parser.add_argument('--ce_loss_coef', default=1.0, type=float)  # classification loss coefficient
+    parser.add_argument('--point_loss_coef', default=5.0, type=float)  # regression loss coefficient
     parser.add_argument('--eos_coef', default=0.5, type=float,
-                        help="Relative classification weight of the no-object class")   # cross-entropy weights
+                        help="Relative classification weight of the no-object class")  # cross-entropy weights
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -87,7 +83,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('params:', n_parameters/1e6)
+    print('params:', n_parameters / 1e6)
 
     # build dataset
     val_image_set = 'val'
@@ -108,15 +104,15 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-        model_without_ddp.load_state_dict(checkpoint['model'])        
+        model_without_ddp.load_state_dict(checkpoint['model'])
         if 'epoch' in checkpoint:
             cur_epoch = checkpoint['epoch']
-    
+
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
-    test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir)
+    test_stats = evaluate(args, model, data_loader_val, device, vis_dir=vis_dir)
     mae, mse = test_stats['mae'], test_stats['mse']
-    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
+    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}'
     print(line)
 
 

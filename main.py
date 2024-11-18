@@ -203,7 +203,7 @@ def main(args):
         # evaluation
         if epoch >= args.eval_start and epoch % args.eval_freq == 0 and epoch >= 0:
             t1 = time.time()
-            test_stats = evaluate(model, data_loader_val, device, epoch, None)
+            test_stats = evaluate(args, model, data_loader_val, device, epoch, None)
             t2 = time.time()
 
             # output results

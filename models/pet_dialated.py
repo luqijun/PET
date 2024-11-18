@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.init import normal_
 
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list)
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list, check_and_clear_memory)
 from .layers import Segmentation_Head
 from .pet_decoder import PETDecoder
 from .position_encoding import build_position_encoding
@@ -191,8 +191,9 @@ class PET(nn.Module):
         assert mask is not None
 
         encode_src = self.context_encoder(src, src_pos_embed, mask, **kwargs)
-
         context_info = (encode_src, src_pos_embed, mask)
+        if 'test' in kwargs and clear_cuda_cache:
+            check_and_clear_memory()
 
         # apply quadtree splitter
         bs, _, src_h, src_w = src.shape
