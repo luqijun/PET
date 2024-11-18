@@ -99,6 +99,12 @@ class WinDecoderTransformer(nn.Module):
                 query_feats = win_unpartion_with_dialated(hs_win, (stride, stride), dec_win_size, qHW)
                 hs = query_feats.flatten(-2).transpose(1, 2).unsqueeze(0)
             else:
+
+                # update query_feats
+                query_feats_win, qHW = win_partion_with_dialated(query_feats, (stride, stride), dec_win_size)
+                query_feats_win[:, v_idx] = hs_win
+                query_feats = win_unpartion_with_dialated(query_feats_win, (stride, stride), dec_win_size, qHW)
+
                 num_elm, num_win, dim = hs_win.shape
                 hs = hs_win.reshape(1, num_elm * num_win, dim).unsqueeze(0)
 

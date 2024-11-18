@@ -159,7 +159,7 @@ class WinDecoderTransformer(nn.Module):
 
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
 
-        dec_win_w, dec_win_h = kwargs['dec_win_size']
+        dec_win_w, dec_win_h = kwargs['dec_win_size_list'][-1]
         self.dec_win_w, self.dec_win_h = dec_win_w, dec_win_h
         query_feats, query_embed, points_queries, qH, qW = pqs
 
