@@ -1,11 +1,10 @@
-import torch
-from util.misc import save_tensor_to_image
-from PIL import Image, ImageDraw
-import matplotlib.pyplot as plt
-import numpy as np
 import random
-import math
+
+import matplotlib.pyplot as plt
+import torch
 import torchvision.transforms as standard_transforms
+from PIL import ImageDraw
+
 
 class DeNormalize(object):
     def __init__(self, mean, std):
@@ -17,27 +16,29 @@ class DeNormalize(object):
             t.mul_(s).add_(m)
         return tensor
 
+
 restore_transform = standard_transforms.Compose([
     DeNormalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     standard_transforms.ToPILImage()
 ])
 
-def visualization_loading_data(img, points, head_sizes, img_seg_level_map, img_seg_head_map, level_map_vmin=0.0, level_map_max=1.0):
 
+def visualization_loading_data(img, points, head_sizes, img_seg_level_map, img_seg_head_map, level_map_vmin=0.0,
+                               level_map_max=1.0):
     # 将 image tensor 转换为 PIL Image 对象
     image_pil = restore_transform(img)
     draw = ImageDraw.Draw(image_pil)
     for point, head_size in zip(points, head_sizes):
         y_lt, x_lt = point - head_size / 2
-        y_rb, x_rb = point + head_size /2
-        draw.rectangle([(x_lt, y_lt), (x_rb, y_rb)], outline='red') # 绘制红色矩形
+        y_rb, x_rb = point + head_size / 2
+        draw.rectangle([(x_lt, y_lt), (x_rb, y_rb)], outline='red')  # 绘制红色矩形
         # draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill='red', outline='red')  # 绘制红色圆点
 
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
     fig.patch.set_facecolor('#f0f0f0')  # 设置整个图形的背景颜色
     axs[0].imshow(image_pil)
     axs[0].axis('off')
-    axs[1].imshow(img_seg_level_map.squeeze(0).numpy(), cmap='viridis', vmin=level_map_vmin, vmax=level_map_max) #
+    axs[1].imshow(img_seg_level_map.squeeze(0).numpy(), cmap='viridis', vmin=level_map_vmin, vmax=level_map_max)  #
     axs[1].axis('off')
     axs[2].imshow(img_seg_head_map.squeeze(0).numpy(), cmap='gray')
     axs[2].axis('off')
@@ -90,8 +91,10 @@ def random_crop(img, points, head_sizes, seg_level_map, seg_head_map, patch_size
     imgH, imgW = result_img.shape[-2:]
     fH, fW = patch_h / imgH, patch_w / imgW
     result_img = torch.nn.functional.interpolate(result_img.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
-    result_seg_level_map = torch.nn.functional.interpolate(result_seg_level_map.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
-    result_seg_head_map = torch.nn.functional.interpolate(result_seg_head_map.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
+    result_seg_level_map = torch.nn.functional.interpolate(result_seg_level_map.unsqueeze(0),
+                                                           (patch_h, patch_w)).squeeze(0)
+    result_seg_head_map = torch.nn.functional.interpolate(result_seg_head_map.unsqueeze(0), (patch_h, patch_w)).squeeze(
+        0)
     result_points[:, 0] *= fH
     result_points[:, 1] *= fW
     result_head_sizes *= fH * fW
@@ -100,19 +103,20 @@ def random_crop(img, points, head_sizes, seg_level_map, seg_head_map, patch_size
 
 min_depth_weight = 1e9
 max_depth_weight = -1e9
-def cal_match_weight_by_depth(depth_values, scale, head_size_weight = 0.5):
 
+
+def cal_match_weight_by_depth(depth_values, scale, head_size_weight=0.5):
     if depth_values.shape[1] == 0:
         return depth_values
 
-    depth_values = depth_values * 0.1 * scale # 人头大小的一半
-    depth_values = head_size_weight * torch.clamp(depth_values, min=4.0) # 最小人头为4
+    depth_values = depth_values * 0.1 * scale  # 人头大小的一半
+    depth_values = head_size_weight * torch.clamp(depth_values, min=4.0)  # 最小人头为4
     weights = 1 / depth_values
 
     weights = torch.clamp(weights, min=0.01, max=0.09)
 
     global min_depth_weight, max_depth_weight
-    min_w, max_w = torch.min(weights, dim=1)[0], torch.max(weights, dim=1)[0] # weights.min(dim=1), weights.max(dim=1)
+    min_w, max_w = torch.min(weights, dim=1)[0], torch.max(weights, dim=1)[0]  # weights.min(dim=1), weights.max(dim=1)
     if min_w < min_depth_weight:
         min_depth_weight = min_w
     if max_w > max_depth_weight:
@@ -121,8 +125,7 @@ def cal_match_weight_by_depth(depth_values, scale, head_size_weight = 0.5):
     return weights
 
 
-def cal_match_weight_by_headsizes(head_sizes, head_size_weight = 1.0, min=0.01, max=0.09):
-
+def cal_match_weight_by_headsizes(head_sizes, head_size_weight=1.0, min=0.01, max=0.09):
     if len(head_sizes) == 0:
         return head_sizes
     weights = 1 / (head_sizes * head_size_weight)
@@ -139,7 +142,7 @@ def sample_points_in_range(points, sizes, m=3):
     Returns:
     new_points: Tensor of shape (n * m, 2) representing the new sampled points.
     """
-    if len(points) == 0 or m==0:
+    if len(points) == 0 or m == 0:
         return points
 
     n = points.shape[0]
