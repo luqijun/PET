@@ -45,12 +45,11 @@ enc_win_dialation_list = [4, 2, 1]  # 长度必须和enc_win_list一致
 # enc_win_size_list = [(4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2), (4, 2)]  # encoder window size
 # enc_win_dialation_list = [8, 8, 4, 4, 2, 2, 1, 1] # 长度必须和enc_win_list一致
 
-# 57.31
-# enc_win_size_list = [(8, 8), (8, 8), (8, 8), (8, 8), (4, 4), (4, 4)]  # encoder window size
-# enc_win_dialation_list = [4, 4, 2, 2, 1, 1] # 长度必须和enc_win_list一致
-
-dec_win_size_8x = (8, 4)
-dec_win_size_4x = (4, 2)
+# decoder结构
+dec_win_size_list_8x = [(8, 4)]
+dec_win_dialation_list_8x = None
+dec_win_size_list_4x = [(4, 2)]
+dec_win_dialation_list_4x = None
 
 # criterion
 # criterion = "criterion_ignore_pt_loss"

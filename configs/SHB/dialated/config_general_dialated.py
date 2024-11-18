@@ -15,16 +15,16 @@ clip_max_norm = 0.1
 
 # train
 lr = 0.0001
-epochs = 6000
+epochs = 10000
 batch_size = 8
-eval_start = 600
+eval_start = 800
 eval_freq = 1
 
 # model
 model = "pet_dialated"
 backbone = "vgg16_bn"
 position_embedding = "sine"  # 'sine', 'learned', 'fourier'
-resume = "outputs/SHB_General/pet_dialated/pet_model_ntimes/checkpoint.pth"
+# resume = "outputs/SHB_General/pet_dialated/pet_model_ntimes/checkpoint.pth"
 dec_layers = 2
 hidden_dim = 256
 dim_feedforward = 512
@@ -49,8 +49,11 @@ enc_win_dialation_list = [4, 2, 1]  # 长度必须和enc_win_list一致
 # enc_win_size_list = [(8, 8), (8, 8), (8, 8), (8, 8), (4, 4), (4, 4)]  # encoder window size
 # enc_win_dialation_list = [4, 4, 2, 2, 1, 1] # 长度必须和enc_win_list一致
 
-dec_win_size_8x = (8, 4)
-dec_win_size_4x = (4, 2)
+# decoder结构
+dec_win_size_list_8x = [(8, 4)]
+dec_win_dialation_list_8x = None
+dec_win_size_list_4x = [(4, 2)]
+dec_win_dialation_list_4x = None
 
 # criterion
 # criterion = "criterion_ignore_pt_loss"
