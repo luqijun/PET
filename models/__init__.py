@@ -5,6 +5,7 @@ from .loss import build_criterion
 from .pet import build_pet
 from .pet_dialated import build_pet as build_pet_dialated
 from .pet_dialated_full_split_dec import build_pet as build_pet_dialated_full_split_dec
+from .pet_dialated_swin import build_pet as build_pet_dialated_swin
 from .pet_encoder_only import build_pet as build_pet_encoder_only
 from .pet_encoder_only_dense_merge import build_pet as build_pet_encoder_only_dense_merge
 from .pet_encoder_only_middle_merge import build_pet as build_pet_encoder_only_middle_merge
@@ -31,6 +32,8 @@ def build_model(args):
             model = build_pet_dialated(args, backbone, num_classes)
         case "pet_dialated_full_split_dec":
             model = build_pet_dialated_full_split_dec(args, backbone, num_classes)
+        case "pet_dialated_swin":
+            model = build_pet_dialated_swin(args, backbone, num_classes)
         case "pet_error_map":
             model = build_pet_error_map(args, backbone, num_classes)
         case "pet_encoder_only":

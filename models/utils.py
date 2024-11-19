@@ -74,6 +74,26 @@ def expand_anchor_points(points, stride, with_origin=True):
     return new_points.flatten(0, 1)
 
 
+def points_queris(samples, stride=8, src=None, **kwargs):
+    """
+    Generate point query embedding during training
+    """
+    # dense position encoding at every pixel location
+
+    # get image shape
+    input = samples.tensors
+    image_shape = torch.tensor(input.shape[2:])
+    shape = (image_shape + stride // 2 - 1) // stride
+
+    # generate point queries
+    shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
+    shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+    shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+    points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1, 0)  # 2xN --> Nx2
+
+    return points_queries
+
+
 def points_queris_embed(samples, stride=8, src=None, **kwargs):
     """
     Generate point query embedding during training
