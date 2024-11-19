@@ -2,7 +2,6 @@
 PET model and criterion classes
 """
 from abc import ABC, abstractmethod
-from typing import Callable
 
 import torch
 import torch.nn.functional as F
@@ -86,8 +85,8 @@ class PET_Base(nn.Module, ABC):
         self.l1_loss = nn.L1Loss()
 
     @abstractmethod
-    def get_build_enc_dec_func(self) -> Callable:
-        return None, None
+    def get_build_enc_dec_func(self):
+        pass
 
     def forward(self, samples: NestedTensor, **kwargs):
         """
