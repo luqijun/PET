@@ -127,3 +127,6 @@ pretrained/
 *.local.py
 *.local.sh
 output_image.png
+data
+outputs
+pretrained
