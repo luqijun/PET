@@ -27,6 +27,9 @@ min_value = 1e9
 max_value = -1e9
 use_double_knn_distance = False
 
+img_min_size = 0  # 512
+img_max_size = 2048
+
 
 def preprocess(path):
     depth_model = load_depth_model()
@@ -108,7 +111,7 @@ def preprocess(path):
             points = points[:, 0:2]  # (x, y, ...)
 
             # resize image 最大2048 最小512
-            image_pil, points = resize_image_and_points(image_pil, points, max_size=2048, min_size=512)
+            image_pil, points = resize_image_and_points(image_pil, points, max_size=img_max_size, min_size=img_min_size)
             width, height = image_pil.size
             img_save_path = os.path.join(images_save_folder, filename)
             image_pil.save(img_save_path)  # 保存图片

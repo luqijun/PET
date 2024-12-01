@@ -1,19 +1,18 @@
 import os
 import random
-import torch
-import torch.nn.functional as F
-import numpy as np
-import torchvision.transforms.functional
-from torch.utils.data import Dataset
-from PIL import Image
+import warnings
+
 import cv2
 import h5py
-import glob
+import numpy as np
 import scipy.io as io
+import torch
+import torch.nn.functional as F
 import torchvision.transforms as standard_transforms
-import warnings
-from util.misc import save_tensor_to_image
-from .utils import compute_density, random_crop, cal_match_weight_by_depth, cal_match_weight_by_headsizes, visualization_loading_data
+from PIL import Image
+from torch.utils.data import Dataset
+
+from .utils import compute_density, random_crop, cal_match_weight_by_headsizes
 
 warnings.filterwarnings('ignore')
 
@@ -41,9 +40,12 @@ class SHB(Dataset):
                 img_path = f"{data_root}/{sub_prefix}/images/{img_name}"
                 self.gt_list[img_path] = {}
                 self.gt_list[img_path]["points"] = f"{data_root}/{sub_prefix}/ground-truth/GT_{mat_name}"
-                self.gt_list[img_path]["head_sizes"] = f"{data_root}/{sub_prefix}/pet_metric_depth/{self.head_sizes_folder}/{txt_name}"
-                self.gt_list[img_path]["seg_level"] = f"{data_root}/{sub_prefix}/pet_metric_depth/{self.seg_level_folder}/{h5_name}"
-                self.gt_list[img_path]["seg_head"] = f"{data_root}/{sub_prefix}/pet_metric_depth/{self.seg_head_folder}/{img_name}"
+                self.gt_list[img_path][
+                    "head_sizes"] = f"{data_root}/{sub_prefix}/pet_metric_depth/{self.head_sizes_folder}/{txt_name}"
+                self.gt_list[img_path][
+                    "seg_level"] = f"{data_root}/{sub_prefix}/pet_metric_depth/{self.seg_level_folder}/{h5_name}"
+                self.gt_list[img_path][
+                    "seg_head"] = f"{data_root}/{sub_prefix}/pet_metric_depth/{self.seg_head_folder}/{img_name}"
 
         self.img_list = sorted(list(self.gt_list.keys()))
         self.nSamples = len(self.img_list)
@@ -52,7 +54,7 @@ class SHB(Dataset):
         self.pil_to_tensor = standard_transforms.ToTensor()
         self.train = train
         self.flip = flip
-        self.patch_size = 256
+        self.patch_size = self.args.get("patch_size", 256)
 
     def __len__(self):
         return self.nSamples
@@ -68,7 +70,9 @@ class SHB(Dataset):
         seg_level_path = gt_paths['seg_level']
         seg_head_path = gt_paths['seg_head']
 
-        img, points, head_sizes, img_seg_level_map, img_seg_head_map = load_data(img_path, points_path, head_sizes_path, seg_level_path, seg_head_path, self.train)
+        img, points, head_sizes, img_seg_level_map, img_seg_head_map = load_data(img_path, points_path, head_sizes_path,
+                                                                                 seg_level_path, seg_head_path,
+                                                                                 self.train)
         points = points.float()
 
         # image transform
@@ -87,12 +91,16 @@ class SHB(Dataset):
             if scale * min_size > self.patch_size:
                 img = F.interpolate(img.unsqueeze(0), scale_factor=scale, mode="bilinear").squeeze(0)
                 points *= scale
-                img_seg_level_map = F.interpolate(img_seg_level_map.unsqueeze(0), scale_factor=scale, mode="bilinear").squeeze(0)
+                img_seg_level_map = F.interpolate(img_seg_level_map.unsqueeze(0), scale_factor=scale,
+                                                  mode="bilinear").squeeze(0)
                 img_seg_head_map = F.interpolate(img_seg_head_map.unsqueeze(0), scale_factor=scale).squeeze(0)
                 head_sizes *= scale
 
             # random crop patch
-            img, points, head_sizes, img_seg_level_map, img_seg_head_map = random_crop(img, points, head_sizes, img_seg_level_map, img_seg_head_map, patch_size=self.patch_size)
+            img, points, head_sizes, img_seg_level_map, img_seg_head_map = random_crop(img, points, head_sizes,
+                                                                                       img_seg_level_map,
+                                                                                       img_seg_head_map,
+                                                                                       patch_size=self.patch_size)
 
             # random flip
             if random.random() > 0.5 and self.flip:
@@ -120,8 +128,10 @@ class SHB(Dataset):
             target['seg_head_map'] = img_seg_head_map
             target['head_sizes'] = head_sizes.float()
             target['match_point_weight'] = cal_match_weight_by_headsizes(head_sizes, self.args.head_size_weight,
-                                                                         min=self.args.get("min_match_point_weight", 0.01),
-                                                                         max=self.args.get("max_match_point_weight", 0.09)) # cal_match_weight_by_depth(depth, scale, self.args.head_size_weight)
+                                                                         min=self.args.get("min_match_point_weight",
+                                                                                           0.01),
+                                                                         max=self.args.get("max_match_point_weight",
+                                                                                           0.09))  # cal_match_weight_by_depth(depth, scale, self.args.head_size_weight)
             # target['depth_weight'] = self.cal_depth_weight(depth, [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09])
             target['label_map'] = self.get_label_map(points, img_seg_level_map.shape[-2:])
             # if self.train:
@@ -130,7 +140,6 @@ class SHB(Dataset):
             # target['depth_encoding'] = self.encode_depth(img_depth, 8)
             # depth_weight = torch.clamp(1 - depth, min=0.1, max=0.9)
             # target['depth_weight'] = depth_weight / 8
-
 
             density, knn_distances = compute_density(points)
             target['density'] = density
@@ -161,7 +170,6 @@ class SHB(Dataset):
         result = torch.zeros(shape)
         result[points[:, 0], points[:, 1]] = 1
         return result
-
 
     def get_seg_map_by_label_map(self, label_map, region_H=16, region_W=16):
 
@@ -209,7 +217,6 @@ class SHB(Dataset):
 
 
 def load_data(img_path, points_path, head_sizes_path, seg_level_path, seg_head_path, train):
-
     # load the images
     img = cv2.imread(img_path)
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))

@@ -51,7 +51,7 @@ class JHU(Dataset):
         self.pil_to_tensor = standard_transforms.ToTensor()
         self.train = train
         self.flip = flip
-        self.patch_size = 256
+        self.patch_size = self.args.get("patch_size", 256)
 
     def __len__(self):
         return self.nSamples

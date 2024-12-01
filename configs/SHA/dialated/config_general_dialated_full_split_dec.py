@@ -17,7 +17,7 @@ clip_max_norm = 0.1
 lr = 0.0001
 epochs = 10000
 batch_size = 8
-eval_start = 200
+eval_start = 100
 eval_freq = 1
 
 # model
@@ -35,9 +35,9 @@ use_seg_head_attention = False
 use_seg_level_attention = False
 
 # encoder 结构
-enc_blocks = 3  # 为1时应用于所有的window
+enc_blocks = 4  # 为1时应用于所有的window
 enc_layers = 2
-enc_win_size_list = [(16, 8), (8, 4), (8, 4)]  # encoder window size
+enc_win_size_list = [(8, 8), (8, 4), (8, 4)]  # encoder window size
 enc_win_dialation_list = [2, 2, 1]  # 长度必须和enc_win_list一致
 
 # # decoder结构 最好结果 48.4615 76.7999

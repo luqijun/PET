@@ -31,30 +31,8 @@ class TransformerEncoder(nn.Module):
         output = src
         layer = self.layers[layer_idx]
 
-        bs = output.shape[1]
-        group_num = 8  # if output.shape[0] == 512 else 128
-        if 'train' in kwargs or bs <= group_num or not kwargs['clear_cuda_cache']:
-            final_output = layer(output, src_mask=mask,
-                                 src_key_padding_mask=src_key_padding_mask, pos=pos)
-        else:
-            # 分开计算
-            num_groups = bs // group_num
-            num_left = bs % group_num
-            group_sizes = [group_num] * num_groups
-            if num_left > 0:
-                group_sizes.append(num_left)
-
-            output_split = torch.split(output, group_sizes, dim=1)
-            src_key_padding_mask_split = torch.split(src_key_padding_mask, group_sizes, dim=0)
-            pos_split = torch.split(pos, group_sizes, dim=1)
-            final_output = []
-            for one_output, one_src_key_padding_mask, one_pos_split in zip(output_split, src_key_padding_mask_split,
-                                                                           pos_split):
-                one_output = layer(one_output, src_mask=None,
-                                   src_key_padding_mask=one_src_key_padding_mask, pos=one_pos_split)
-                final_output.append(one_output)
-                torch.cuda.empty_cache()
-            final_output = torch.cat(final_output, dim=1)
+        final_output = layer(output, src_mask=mask,
+                             src_key_padding_mask=src_key_padding_mask, pos=pos)
 
         return final_output
 
