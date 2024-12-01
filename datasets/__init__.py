@@ -7,6 +7,7 @@ from .SHA_FgMask import build as build_sha_fg_mask
 from .SHA_General import build as build_sha_general
 from .SHA_General_Multi_Points import build as build_sha_general_multi_points
 from .SHB_General import build as build_shb_general
+from .UCF_QNRF_General import build as build_ucf_qnrf_general
 
 
 # data_path = {
@@ -33,4 +34,6 @@ def build_dataset(image_set, args):
         return build_jhu(image_set, args)
     if args.dataset_file == 'JHU_General':
         return build_jhu_general(image_set, args)
+    if args.dataset_file == 'UCF_QNRF_General':
+        return build_ucf_qnrf_general(image_set, args)
     raise ValueError(f'dataset {args.dataset_file} not supported')
