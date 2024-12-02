@@ -3,7 +3,6 @@ import datetime as dt
 import json
 import os
 import random
-import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -158,8 +157,9 @@ def main(args):
     # training
     print("Start training")
     start_time = time.time()
-    
+
     args.save_freq = args.get('save_freq', 1)
+
     def save_check_point(epoch, checkpoint_path):
         utils.save_on_master({
             'model': model_without_ddp.state_dict(),
@@ -172,9 +172,9 @@ def main(args):
             'best_mse': best_mse,
             'best_mse_epoch': best_mse_epoch,
         }, checkpoint_path)
-    
+
     for epoch in range(start_epoch, args.epochs):
-        
+
         if args.distributed:
             sampler_train.set_epoch(epoch)
 
@@ -183,11 +183,11 @@ def main(args):
                                       model, criterion, data_loader_train, optimizer, device, epoch,
                                       args.clip_max_norm)
         t2 = time.time()
-        
+
         lr = optimizer.param_groups[0]['lr']
         now_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         total_train_time = t2 - t1
-        
+
         train_log_msg = f"[{now_time}][ep {epoch}][lr {lr:.7f}][{total_train_time:.2f}s]"
         print(train_log_msg)
 
@@ -200,7 +200,7 @@ def main(args):
         # save checkpoint
         if epoch % args.save_freq == 0:
             save_check_point(epoch, os.path.join(output_dir, 'checkpoint.pth'))
-        
+
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch, 'n_parameters': n_parameters}
 
@@ -225,11 +225,11 @@ def main(args):
                 best_mse_epoch = epoch
                 best_mse = mse
                 save_check_point(epoch, os.path.join(output_dir, 'best_mse_checkpoint.pth'))
-            
+
             total_eval_time = t2 - t1
-            eval_log_msg = f"epoch: {epoch}, mae: {mae}, mse: {mse}, time: {total_eval_time:.2f}s, \n
-                             best mae: {best_mae}, best epoch: {best_epoch}\tbest mse: {best_mse}, best epoch: {best_mse_epoch}"
-            
+            eval_log_msg = f"epoch: {epoch}, mae: {mae}, mse: {mse}, time: {total_eval_time:.2f}s, \n" \
+                           f"best mae: {best_mae}, best epoch: {best_epoch}\tbest mse: {best_mse}, best epoch: {best_mse_epoch}"
+
             print("\n==========================")
             print(eval_log_msg)
             print("==========================\n")

@@ -1,22 +1,43 @@
-import math
-import statistics
-
-from PIL import Image
-import numpy as np
-from numpy import ndarray
-import h5py
 import cv2
-from scipy.spatial import KDTree
-from scipy.spatial.distance import cdist
+import h5py
 import matplotlib
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter
+import numpy as np
+from PIL import Image
 from joblib import Parallel, delayed
+from numpy import ndarray
+from scipy.ndimage import gaussian_filter
+from scipy.spatial import KDTree
+from scipy.spatial.distance import cdist
 
 # 设置 matplotlib 使用 Agg 后端
 matplotlib.use('Agg')
 
-def resize_image_and_points(img: Image.Image, points: ndarray, max_size: int=2048, min_size: int=512):
+
+def resize_image_and_points_by_min_edge(img: Image.Image, points: ndarray, min_edge_max_size: int = 2048):
+    # 读取图片
+    width, height = img.size
+
+    img_min_size = min(width, height)
+
+    # 计算缩放比例
+    scale_factor = 1.0
+    if img_min_size > min_edge_max_size:
+        scale_factor = min_edge_max_size / img_min_size
+
+    if scale_factor != 1.0:
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+
+        # 调整图片大小
+        img = img.resize((new_width, new_height), Image.ANTIALIAS)
+
+        # 调整点
+        points = points * scale_factor
+    return img, points
+
+
+def resize_image_and_points(img: Image.Image, points: ndarray, max_size: int = 2048, min_size: int = 512):
     # 读取图片
     width, height = img.size
 
@@ -60,15 +81,15 @@ def save_image(path, image_arr, boxes):
     # 遍历每个目标框并绘制到图像上
     for box in boxes:
         x, y, w, h = box
-        x1, y1 = x, y # 计算左上角坐标
+        x1, y1 = x, y  # 计算左上角坐标
         x2, y2 = x + w, y + h  # 计算右下角坐标
-        cv2.rectangle(image_arr, (x1.round().astype(int), y1.round().astype(int)), (x2.round().astype(int), y2.round().astype(int)), (0, 255, 0), 1)  # 绘制矩形框，颜色为绿色，线宽为2
+        cv2.rectangle(image_arr, (x1.round().astype(int), y1.round().astype(int)),
+                      (x2.round().astype(int), y2.round().astype(int)), (0, 255, 0), 1)  # 绘制矩形框，颜色为绿色，线宽为2
     # 保存图像
     cv2.imwrite(path, image_arr)
 
 
-def calculate_average_nearest_neighbor_distance(points, k=3, default = 16.0):
-
+def calculate_average_nearest_neighbor_distance(points, k=3, default=16.0):
     if len(points) == 0:
         return np.array([])
     if len(points) == 1:
@@ -88,7 +109,7 @@ def calculate_average_nearest_neighbor_distance(points, k=3, default = 16.0):
     return 0.5 * average_distances
 
 
-def calculate_nearest_neighbor_distances_double(points, k=3, default = 16.0):
+def calculate_nearest_neighbor_distances_double(points, k=3, default=16.0):
     """
     计算每个点到最近邻的k个点的平均距离，然后再次选择每个点的最近邻的k个点，
     从平均距离中选取这k个点对应的值，计算对应的平均值。
@@ -112,7 +133,7 @@ def calculate_nearest_neighbor_distances_double(points, k=3, default = 16.0):
     tree = KDTree(points)
 
     # 查询每个点的最近邻的k+1个点（包括自身）
-    distances, indices = tree.query(points, k=k+1)
+    distances, indices = tree.query(points, k=k + 1)
 
     # 计算每个点到最近邻的k个点的平均距离（排除自身）
     avg_distances = np.mean(distances[:, 1:], axis=1)
@@ -200,7 +221,7 @@ def generate_gaussian_density_map(image, points, sigma=4):
     # 遍历每个点，将其位置在密度图上标记为1
     for point in points:
         x = min(max(int(point[0]), 0), density_map.shape[1] - 1)
-        y = min(max(int(point[1]), 0), density_map.shape[0]-1)
+        y = min(max(int(point[1]), 0), density_map.shape[0] - 1)
         density_map[y, x] += 1
 
     # 使用高斯滤波器对密度图进行平滑处理
@@ -211,6 +232,7 @@ def generate_gaussian_density_map(image, points, sigma=4):
     density_map *= len(points)
 
     return density_map
+
 
 def generate_point_density_map(image, points, window_size=32):
     # 获取图像的形状
@@ -233,8 +255,7 @@ def generate_point_density_map(image, points, window_size=32):
     return density_map
 
 
-def save_density_map(density_map, save_path:str, title:str):
-
+def save_density_map(density_map, save_path: str, title: str):
     # 可视化深度图
     plt.figure(figsize=(8, 6))
     plt.imshow(density_map, cmap='viridis', vmin=0.0, vmax=1.0)  # 使用viridis颜色映射
@@ -247,17 +268,17 @@ def save_density_map(density_map, save_path:str, title:str):
     plt.close()
 
 
-def save_thresholded_density_map(density_map, save_path:str, title:str, thresholds):
+def save_thresholded_density_map(density_map, save_path: str, title: str, thresholds):
     """
     根据给定的阈值绘制分割图，最后将原始图像和分割图放在一行上显示。
     """
 
     # 创建一个1行(len(thresholds) + 1)列的子图布局
     fig, axs = plt.subplots(1, len(thresholds) + 1, figsize=(15, 5))
-    fig.patch.set_facecolor('#f0f0f0') # 设置整个图形的背景颜色
+    fig.patch.set_facecolor('#f0f0f0')  # 设置整个图形的背景颜色
 
     # 显示原始图像
-    im = axs[0].imshow(density_map, cmap='viridis') # , vmin=0.0, vmax=0.04
+    im = axs[0].imshow(density_map, cmap='viridis')  # , vmin=0.0, vmax=0.04
     cbar = fig.colorbar(im, ax=axs[0], orientation='vertical', fraction=0.046, pad=0.04)
     cbar.set_label('Density', labelpad=5)
     axs[0].set_title(title)
@@ -318,17 +339,17 @@ def generate_density_level_map(image, points, window_size=128, n_jobs=-1):
     return np.array(density_level_map).reshape(height, width)
 
 
-def save_thresholded_density_level_map(density_level_map, save_path:str, title:str, thresholds):
+def save_thresholded_density_level_map(density_level_map, save_path: str, title: str, thresholds):
     """
     根据给定的阈值绘制分割图，最后将原始图像和分割图放在一行上显示。
     """
 
     # 创建一个1行(len(thresholds) + 1)列的子图布局
     fig, axs = plt.subplots(1, len(thresholds) + 1, figsize=(15, 5))
-    fig.patch.set_facecolor('#f0f0f0') # 设置整个图形的背景颜色
+    fig.patch.set_facecolor('#f0f0f0')  # 设置整个图形的背景颜色
 
     # 显示原始图像
-    im = axs[0].imshow(density_level_map, cmap='viridis', vmin=0.0, vmax=200) #
+    im = axs[0].imshow(density_level_map, cmap='viridis', vmin=0.0, vmax=200)  #
     cbar = fig.colorbar(im, ax=axs[0], orientation='vertical', fraction=0.046, pad=0.04)
     cbar.set_label('Density Level', labelpad=5)
     axs[0].set_title(title)
@@ -374,8 +395,7 @@ def save_thresholded_density_level_map(density_level_map, save_path:str, title:s
 #     return distribute_type
 
 def select_head_size(depth_head_size, var_head_size):
-
-    if len(depth_head_size) <=2: # 点非常少的情况
+    if len(depth_head_size) <= 2:  # 点非常少的情况
         return depth_head_size
 
     # depth_distribute_type = get_distribute_by_head_size(depth_head_size)
@@ -385,7 +405,7 @@ def select_head_size(depth_head_size, var_head_size):
     for d_size, a_size in zip(depth_head_size, var_head_size):
         size = -1
         if d_size > a_size * 1.5:
-           size = a_size * 1.5
+            size = a_size * 1.5
         elif d_size < a_size / 1.5:
             size = a_size / 1.5
             # match var_distribute_type:
@@ -408,4 +428,5 @@ def exception_wrapper(func):
         except Exception as e:
             print(f"An exception occurred: {e}")
             return "Error: Function execution failed."
+
     return wrapper

@@ -28,7 +28,6 @@ class UCF_QNRF(Dataset):
         self.gt_list = {}
         prefix_list = ["Train"] if prefix == "train" else ["Test"]
         for sub_prefix in prefix_list:
-            sub_prefix = f"{sub_prefix}/{args.processed_result_dir}"
             img_list = os.listdir(f"{data_root}/{sub_prefix}/images")
             for img_name in img_list:
                 txt_name = img_name.replace(".jpg", ".txt")

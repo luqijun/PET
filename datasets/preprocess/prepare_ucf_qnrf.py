@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from prepare_base import handle_depth_var_split, handle_var_split, handle_depth_split, \
     handle_depth_map
-from utils import resize_image_and_points
+from utils import resize_image_and_points, resize_image_and_points_by_min_edge
 
 use_metric_depth = True
 if use_metric_depth:
@@ -31,6 +31,13 @@ use_double_knn_distance = False
 img_min_size = 0
 img_max_size = 2048
 
+scale_min_edge = True
+if scale_min_edge:
+    min_edge_max_size = 2048
+    scale_info = f'min_edge_{img_max_size}'
+else:
+    scale_info = f'{img_min_size}_{img_max_size}'
+
 
 def preprocess(path):
     depth_model = load_depth_model()
@@ -41,59 +48,60 @@ def preprocess(path):
 
     for folder in ['Train', 'Test']:
 
-        parent_folder = os.path.join(path, 'processed', folder, f'{img_min_size}_{img_max_size}')
-        os.makedirs(parent_folder, exist_ok=True)
-
+        # 图片文件夹
         images_folder = os.path.join(path, folder)
-
-        # 图像处理
-        images_save_folder = os.path.join(path, parent_folder, 'images')
-        os.makedirs(images_save_folder, exist_ok=True)
-
-        # 点数据处理
-        points_save_folder = os.path.join(path, parent_folder, 'gt')
-        os.makedirs(points_save_folder, exist_ok=True)
 
         # 标注文件夹
         annotations_folder = images_folder
 
+        save_folder = os.path.join(path, 'processed', scale_info, folder)
+        os.makedirs(save_folder, exist_ok=True)
+
+        # 图像处理
+        images_save_folder = os.path.join(path, save_folder, 'images')
+        os.makedirs(images_save_folder, exist_ok=True)
+
+        # 点数据处理
+        points_save_folder = os.path.join(path, save_folder, 'gt')
+        os.makedirs(points_save_folder, exist_ok=True)
+
         # 点密度图
-        density_map_folder = os.path.join(path, parent_folder, 'density_map')
-        density_map_folder_show = os.path.join(path, parent_folder, 'density_map_show')
+        density_map_folder = os.path.join(path, save_folder, 'density_map')
+        density_map_folder_show = os.path.join(path, save_folder, 'density_map_show')
         os.makedirs(density_map_folder, exist_ok=True)
         os.makedirs(density_map_folder_show, exist_ok=True)
 
         # 点密度等级图
-        density_level_map_folder = os.path.join(path, parent_folder, 'density_level_map')
-        density_level_map_folder_show = os.path.join(path, parent_folder, 'density_level_map_show')
+        density_level_map_folder = os.path.join(path, save_folder, 'density_level_map')
+        density_level_map_folder_show = os.path.join(path, save_folder, 'density_level_map_show')
         os.makedirs(density_level_map_folder, exist_ok=True)
         os.makedirs(density_level_map_folder_show, exist_ok=True)
 
         # 保存depth文件夹
-        images_depth_folder = os.path.join(path, parent_folder, 'images_depth')
-        images_depth_folder_show = os.path.join(path, parent_folder, 'images_depth_show')
+        images_depth_folder = os.path.join(path, save_folder, 'images_depth')
+        images_depth_folder_show = os.path.join(path, save_folder, 'images_depth_show')
         os.makedirs(images_depth_folder, exist_ok=True)
         os.makedirs(images_depth_folder_show, exist_ok=True)
 
         # 人头分割图
-        head_split_by_var_folder = os.path.join(path, parent_folder, 'images_head_split_by_var')
-        head_split_by_depth_folder = os.path.join(path, parent_folder, 'images_head_split_by_depth')
-        head_split_by_depth_var_folder = os.path.join(path, parent_folder, 'images_head_split_by_depth_var')
+        head_split_by_var_folder = os.path.join(path, save_folder, 'images_head_split_by_var')
+        head_split_by_depth_folder = os.path.join(path, save_folder, 'images_head_split_by_depth')
+        head_split_by_depth_var_folder = os.path.join(path, save_folder, 'images_head_split_by_depth_var')
         os.makedirs(head_split_by_var_folder, exist_ok=True)
         os.makedirs(head_split_by_depth_folder, exist_ok=True)
         os.makedirs(head_split_by_depth_var_folder, exist_ok=True)
 
         # 保存人头Sizes
-        head_size_by_var_folder = os.path.join(path, parent_folder, 'images_head_size_by_var')
-        head_size_by_depth_folder = os.path.join(path, parent_folder, 'images_head_size_by_depth')
-        head_size_by_depth_var_folder = os.path.join(path, parent_folder, 'images_head_size_by_depth_var')
+        head_size_by_var_folder = os.path.join(path, save_folder, 'images_head_size_by_var')
+        head_size_by_depth_folder = os.path.join(path, save_folder, 'images_head_size_by_depth')
+        head_size_by_depth_var_folder = os.path.join(path, save_folder, 'images_head_size_by_depth_var')
         os.makedirs(head_size_by_var_folder, exist_ok=True)
         os.makedirs(head_size_by_depth_folder, exist_ok=True)
         os.makedirs(head_size_by_depth_var_folder, exist_ok=True)
 
-        head_split_by_var_folder_show = os.path.join(path, parent_folder, 'images_head_split_by_var_show')
-        head_split_by_depth_folder_show = os.path.join(path, parent_folder, 'images_head_split_by_depth_show')
-        head_split_by_depth_var_folder_show = os.path.join(path, parent_folder, 'images_head_split_by_depth_var_show')
+        head_split_by_var_folder_show = os.path.join(path, save_folder, 'images_head_split_by_var_show')
+        head_split_by_depth_folder_show = os.path.join(path, save_folder, 'images_head_split_by_depth_show')
+        head_split_by_depth_var_folder_show = os.path.join(path, save_folder, 'images_head_split_by_depth_var_show')
         os.makedirs(head_split_by_var_folder_show, exist_ok=True)
         os.makedirs(head_split_by_depth_folder_show, exist_ok=True)
         os.makedirs(head_split_by_depth_var_folder_show, exist_ok=True)
@@ -115,7 +123,12 @@ def preprocess(path):
                 points = np.zeros((0, 2))
             points = points[:, 0:2]  # (x, y, ...)
 
-            image_pil, points = resize_image_and_points(image_pil, points, max_size=img_max_size, min_size=img_min_size)
+            if scale_min_edge:
+                image_pil, points = resize_image_and_points_by_min_edge(image_pil, points,
+                                                                        min_edge_max_size=min_edge_max_size)
+            else:
+                image_pil, points = resize_image_and_points(image_pil, points, max_size=img_max_size,
+                                                            min_size=img_min_size)
             width, height = image_pil.size
             image = np.array(image_pil)
             img_save_path = os.path.join(images_save_folder, filename)
