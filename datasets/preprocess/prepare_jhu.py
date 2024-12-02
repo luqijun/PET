@@ -39,57 +39,60 @@ def preprocess(path):
     # pipe = pipeline(task="depth-estimation", model="LiheYoung/depth-anything-small-hf")
 
     for folder in ['train', 'test', 'val']:
-
+        
+        # 图片文件夹
         images_folder = os.path.join(path, folder, 'images')
+        
+        # 标注文件夹
+        annotations_folder = os.path.join(path, folder, 'gt')
+        
+        save_folder = f'processed/{img_min_size}_{img_max_size}/{folder}'
 
         # 图像处理
-        images_save_folder = os.path.join(path, folder, 'images_512_2048')
+        images_save_folder = os.path.join(path, save_folder, 'images')
         os.makedirs(images_save_folder, exist_ok=True)
 
         # 点数据处理
-        points_save_folder = os.path.join(path, folder, 'gt_512_2048')
+        points_save_folder = os.path.join(path, save_folder, 'gt')
         os.makedirs(points_save_folder, exist_ok=True)
 
-        # 标注文件夹
-        annotations_folder = os.path.join(path, folder, 'gt')
-
         # 点密度图
-        density_map_folder = os.path.join(path, folder, 'density_map_512_2048')
-        density_map_folder_show = os.path.join(path, folder, 'density_map_512_2048_show')
+        density_map_folder = os.path.join(path, save_folder, 'density_map')
+        density_map_folder_show = os.path.join(path, save_folder, 'density_map_show')
         os.makedirs(density_map_folder, exist_ok=True)
         os.makedirs(density_map_folder_show, exist_ok=True)
 
         # 点密度等级图
-        density_level_map_folder = os.path.join(path, folder, 'density_level_map_512_2048')
-        density_level_map_folder_show = os.path.join(path, folder, 'density_level_map_512_2048_show')
+        density_level_map_folder = os.path.join(path, save_folder, 'density_level_map')
+        density_level_map_folder_show = os.path.join(path, save_folder, 'density_level_map_show')
         os.makedirs(density_level_map_folder, exist_ok=True)
         os.makedirs(density_level_map_folder_show, exist_ok=True)
 
         # 保存depth文件夹
-        images_depth_folder = os.path.join(path, folder, 'images_depth_512_2048')
-        images_depth_folder_show = os.path.join(path, folder, 'images_depth_512_2048_show')
+        images_depth_folder = os.path.join(path, save_folder, 'images_depth')
+        images_depth_folder_show = os.path.join(path, save_folder, 'images_depth_show')
         os.makedirs(images_depth_folder, exist_ok=True)
         os.makedirs(images_depth_folder_show, exist_ok=True)
 
         # 人头分割图
-        head_split_by_var_folder = os.path.join(path, folder, 'images_head_split_by_var_512_2048')
-        head_split_by_depth_folder = os.path.join(path, folder, 'images_head_split_by_depth_512_2048')
-        head_split_by_depth_var_folder = os.path.join(path, folder, 'images_head_split_by_depth_var_512_2048')
+        head_split_by_var_folder = os.path.join(path, save_folder, 'images_head_split_by_var')
+        head_split_by_depth_folder = os.path.join(path, save_folder, 'images_head_split_by_depth')
+        head_split_by_depth_var_folder = os.path.join(path, save_folder, 'images_head_split_by_depth_var')
         os.makedirs(head_split_by_var_folder, exist_ok=True)
         os.makedirs(head_split_by_depth_folder, exist_ok=True)
         os.makedirs(head_split_by_depth_var_folder, exist_ok=True)
 
         # 保存人头Sizes
-        head_size_by_var_folder = os.path.join(path, folder, 'images_head_size_by_var_512_2048')
-        head_size_by_depth_folder = os.path.join(path, folder, 'images_head_size_by_depth_512_2048')
-        head_size_by_depth_var_folder = os.path.join(path, folder, 'images_head_size_by_depth_var_512_2048')
+        head_size_by_var_folder = os.path.join(path, save_folder, 'images_head_size_by_var')
+        head_size_by_depth_folder = os.path.join(path, save_folder, 'images_head_size_by_depth')
+        head_size_by_depth_var_folder = os.path.join(path, save_folder, 'images_head_size_by_depth_var')
         os.makedirs(head_size_by_var_folder, exist_ok=True)
         os.makedirs(head_size_by_depth_folder, exist_ok=True)
         os.makedirs(head_size_by_depth_var_folder, exist_ok=True)
 
-        head_split_by_var_folder_show = os.path.join(path, folder, 'images_head_split_by_var_512_2048_show')
-        head_split_by_depth_folder_show = os.path.join(path, folder, 'images_head_split_by_depth_512_2048_show')
-        head_split_by_depth_var_folder_show = os.path.join(path, folder, 'images_head_split_by_depth_var_512_2048_show')
+        head_split_by_var_folder_show = os.path.join(path, save_folder, 'images_head_split_by_var_show')
+        head_split_by_depth_folder_show = os.path.join(path, save_folder, 'images_head_split_by_depth_show')
+        head_split_by_depth_var_folder_show = os.path.join(path, save_folder, 'images_head_split_by_depth_var_show')
         os.makedirs(head_split_by_var_folder_show, exist_ok=True)
         os.makedirs(head_split_by_depth_folder_show, exist_ok=True)
         os.makedirs(head_split_by_depth_var_folder_show, exist_ok=True)
@@ -126,11 +129,11 @@ def preprocess(path):
             plot_title = f"JHU Image  {filename.split('.')[0]}"
 
             # 生成点密度图
-            handle_density_map(density_map_folder, density_map_folder_show, filename, image, plot_title, points)
+            # handle_density_map(density_map_folder, density_map_folder_show, filename, image, plot_title, points)
 
             # 生成点密度等级图
-            handle_density_level_map(density_level_map_folder, density_level_map_folder_show, filename, image,
-                                     plot_title, points)
+            # handle_density_level_map(density_level_map_folder, density_level_map_folder_show, filename, image,
+            #                          plot_title, points)
 
             # 深度图
             image_depth_map = handle_depth_map(depth_model, filename, image, images_depth_folder,
@@ -155,9 +158,8 @@ def preprocess(path):
 
 
 if __name__ == '__main__':
-    # root_test = '/mnt/c/Users/lqjun/Desktop'
 
-    root = '/mnt/e/MyDocs/Code/Datasets/jhu_crowd_v2.0'
+    root = '../../data/JHU'
     preprocess(root)
     print('Process Success!')
     pass

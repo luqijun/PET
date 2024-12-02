@@ -28,15 +28,15 @@ class JHU(Dataset):
         self.gt_list = {}
         prefix_list = ["train"] if prefix == "train" else ["test"]
         for sub_prefix in prefix_list:
-            sub_prefix = f"{sub_prefix}/512_2048"
-            img_list = os.listdir(f"{data_root}/{sub_prefix}/images_512_2048")
+            sub_prefix = f"{sub_prefix}"
+            img_list = os.listdir(f"{data_root}/{sub_prefix}/images")
             for img_name in img_list:
                 txt_name = img_name.replace(".jpg", ".txt")
                 h5_name = img_name.replace(".jpg", ".h5")
 
-                img_path = f"{data_root}/{sub_prefix}/images_512_2048/{img_name}"
+                img_path = f"{data_root}/{sub_prefix}/images/{img_name}"
                 self.gt_list[img_path] = {}
-                self.gt_list[img_path]["points"] = f"{data_root}/{sub_prefix}/gt_512_2048/{h5_name}"
+                self.gt_list[img_path]["points"] = f"{data_root}/{sub_prefix}/gt/{h5_name}"
                 self.gt_list[img_path][
                     "head_sizes"] = f"{data_root}/{sub_prefix}/{self.head_sizes_folder}/{txt_name}"
                 self.gt_list[img_path][
