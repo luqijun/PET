@@ -103,7 +103,7 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
-    print_freq = 10
+    print_freq = args.get('train_print_freq', 10)
 
     is_train_one = args.get("is_train_one", False)
     clear_cuda_cache = args.get('clear_cuda_cache', False)
@@ -165,7 +165,7 @@ def evaluate(args, model, data_loader, device, epoch=0, vis_dir=None):
     if vis_dir is not None:
         os.makedirs(vis_dir, exist_ok=True)
 
-    print_freq = 10
+    print_freq = args.get('val_print_freq', 10)
     clear_cuda_cache = args.get('clear_cuda_cache', False)
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
