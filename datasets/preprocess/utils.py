@@ -14,6 +14,62 @@ from scipy.spatial.distance import cdist
 matplotlib.use('Agg')
 
 
+def split_image_and_points(img: Image.Image, points: np.ndarray, split_size=512, overlap_ratio=0.25, expand_ratio=0.25):
+    """
+    分割图像并跟踪点的归属。
+    图像被划分为一系列的 split_size x split_size 块。若横向最后一块宽度小于split_size的一半，则自动与最后一块合并，纵向也如此。
+
+    :param img: PIL 图像
+    :param points: 图像中的点，形状为 (n, 2)，每个点是 (x, y)
+    :param split_size: 分割块的大小
+    :param overlap_ratio: 重复比例
+    :return: (blocks, points_in_blocks)
+        blocks: 分割后的图像块列表，每个是 PIL 图像
+        points_in_blocks: 每个块内点的坐标，列表中的每一项对应 blocks 中的一个图像块。
+    """
+    # 图像尺寸
+    img_width, img_height = img.size
+
+    # 处理 points
+    points = np.clip(points, [0, 0], [img_width - 1, img_height - 1])
+
+    # 重叠比例为 overlap_ratio
+    overlap = int(split_size * overlap_ratio)
+
+    # 块列表和块内点列表
+    blocks = []
+    points_in_blocks = []
+
+    # 遍历块的起始点
+    for y in range(0, img_height - int(expand_ratio * split_size), split_size - overlap):
+        for x in range(0, img_width - int(expand_ratio * split_size), split_size - overlap):
+
+            split_size_x = split_size
+            split_size_y = split_size
+            if img_width - x < split_size * (1 + expand_ratio):
+                split_size_x = img_width - x
+            if img_height - y < split_size * (1 + expand_ratio):
+                split_size_y = img_height - y
+
+            # 计算块的范围
+            x_end = min(x + split_size_x, img_width)
+            y_end = min(y + split_size_y, img_height)
+
+            # 裁剪图像块
+            block = img.crop((x, y, x_end, y_end))
+            blocks.append(block)
+
+            # 计算当前块内的点
+            block_points = []
+            for px, py in points:
+                if x <= px < x_end and y <= py < y_end:
+                    # 转换点为块内的相对坐标
+                    block_points.append((px - x, py - y))
+            points_in_blocks.append(block_points)
+
+    return blocks, points_in_blocks
+
+
 def resize_image_and_points_by_min_edge(img: Image.Image, points: ndarray, min_edge_max_size: int = 2048):
     # 读取图片
     width, height = img.size
