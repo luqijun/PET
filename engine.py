@@ -4,6 +4,7 @@ Train and eval functions used in main.py
 import math
 import os
 import sys
+from collections import defaultdict
 from datetime import datetime
 from typing import Iterable
 
@@ -223,3 +224,107 @@ def evaluate(args, model, data_loader, device, epoch=0, vis_dir=None):
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     results['mse'] = np.sqrt(results['mse'])
     return results
+
+
+@torch.no_grad()
+def evaluate_split(args, model, data_loader, device, epoch=0, vis_dir=None):
+    model.eval()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    if vis_dir is not None:
+        os.makedirs(vis_dir, exist_ok=True)
+
+    gt_results = defaultdict(dict)
+    eval_results = defaultdict(dict)
+
+    print_freq = args.get('val_print_freq', 10)
+    clear_cuda_cache = args.get('clear_cuda_cache', False)
+    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        samples = samples.to(device)
+        img_h, img_w = samples.tensors.shape[-2:]
+
+        # 清缓存
+        if clear_cuda_cache:
+            check_and_clear_memory()
+
+        # inference
+        outputs = model(samples, test=True, targets=targets)
+        if 'predict_cnt' in outputs:
+            predict_cnt = outputs['predict_cnt']
+        else:
+            outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
+            outputs_points = outputs['pred_points'][0]
+            outputs_offsets = outputs['pred_offsets'][0]
+
+            # process predicted points
+            predict_cnt = len(outputs_scores)
+
+        if 'gt_cnt' in outputs:
+            gt_cnt = outputs['gt_cnt']
+        else:
+            gt_cnt = targets[0]['points'].shape[0]
+
+        image_bolck_name: str = os.path.splitext(os.path.basename(targets[0]['image_path']))[0]
+        split_parts = image_bolck_name.rsplit('_', maxsplit=1)
+        img_name, block_num = split_parts[0], split_parts[1]
+
+        gt_results[img_name][block_num] = gt_cnt
+        eval_results[img_name][block_num] = predict_cnt
+
+        # compute error
+        mae = abs(predict_cnt - gt_cnt)
+        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+
+        # record results
+        results = {}
+        toTensor = lambda x: torch.tensor(x).float().cuda()
+        results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
+        metric_logger.update(mae=results['mae'], mse=results['mse'])
+
+        results_reduced = utils.reduce_dict(results)
+        metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
+
+        # visualize predictions
+        if vis_dir:
+            points = [[point[0] * img_h, point[1] * img_w] for point in outputs_points]  # recover to actual points
+            gt_split_map = (outputs['gt_split_map'][0].detach().cpu().squeeze(
+                0) > 0.5).float().numpy() if 'gt_split_map' in outputs else None
+            gt_seg_head_map = (outputs['gt_seg_head_map'][0].detach().cpu().squeeze(
+                0)).float().numpy() if 'gt_seg_head_map' in outputs else None
+            pred_split_map = (outputs['pred_split_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            pred_seg_head_map = (outputs['pred_seg_head_map'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            visualization(samples, targets, [points], vis_dir,
+                          gt_split_map=gt_split_map, gt_seg_head_map=gt_seg_head_map,
+                          pred_split_map=pred_split_map, pred_seg_head_map=pred_seg_head_map)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+
+    img_keys = eval_results.keys()
+    gt_count_list = [sum(gt_results[k].values()) for k in img_keys]
+    eval_count_list = [sum(eval_results[k].values()) for k in img_keys]
+
+    image_points_num_filename = args.get('image_points_num_filename', None)
+    if image_points_num_filename and os.path.exists(image_points_num_filename):
+        gt_results_from_file = np.load(image_points_num_filename, allow_pickle=True).item()
+        gt_count_list_from_file = [gt_results_from_file[k] for k in img_keys]
+        # assert gt_count_list == gt_count_list_from_file
+        gt_count_list = gt_count_list_from_file
+
+    maes = [abs(gt_count_list[i] - eval_count_list[i]) for i in range(len(gt_count_list))]
+    mses = [(gt_count_list[i] - eval_count_list[i]) * (gt_count_list[i] - eval_count_list[i]) for i in
+            range(len(gt_count_list))]
+
+    results['mae'] = sum(maes) / len(maes)
+    results['mse'] = np.sqrt(sum(mses) / len(mses))
+
+    # results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    # results['mse'] = np.sqrt(results['mse'])
+    return results
+
+
+def get_evaluate_func(args):
+    eval_func_name = args.get('eval_func_name', 'evaluate')
+    return eval(eval_func_name)

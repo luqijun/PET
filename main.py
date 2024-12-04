@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
 from datasets import build_dataset
-from engine import evaluate, train_one_epoch
+from engine import get_evaluate_func, train_one_epoch
 from models import build_model
 
 
@@ -159,6 +159,7 @@ def main(args):
     start_time = time.time()
 
     args.save_freq = args.get('save_freq', 1)
+    evaluate = get_evaluate_func(args)
 
     def save_check_point(epoch, checkpoint_path):
         utils.save_on_master({
