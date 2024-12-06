@@ -249,9 +249,9 @@ class MetricLogger(object):
             header, total_time_str, total_time / len(iterable)))
 
 
-def collate_fn(batch):
+def collate_fn(batch, patch_size=256):
     batch = list(zip(*batch))
-    batch[0] = nested_tensor_from_tensor_list(batch[0])
+    batch[0] = nested_tensor_from_tensor_list(batch[0], patch_size)
     img_shape = batch[0].tensors.shape[-2:]
     # for tgt in batch[1]:
     #     if tgt['seg_level_map'].shape[-2:] != img_shape:
@@ -270,14 +270,14 @@ def collate_fn(batch):
     return tuple(batch)
 
 
-def _max_by_axis_pad(the_list):
+def _max_by_axis_pad(the_list, block_size=256):
     # type: (List[List[int]]) -> List[int]
     maxes = the_list[0]
     for sublist in the_list[1:]:
         for index, item in enumerate(sublist):
             maxes[index] = max(maxes[index], item)
 
-    block = 256
+    block = block_size
     for i in range(2):
         maxes[i + 1] = ((maxes[i + 1] - 1) // block + 1) * block
     return maxes
@@ -306,7 +306,7 @@ class NestedTensor(object):
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
+def nested_tensor_from_tensor_list(tensor_list: List[Tensor], patch_size=256):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
@@ -315,7 +315,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
             return _onnx_nested_tensor_from_tensor_list(tensor_list)
 
         # TODO make it support different-sized images
-        max_size = _max_by_axis_pad([list(img.shape) for img in tensor_list])
+        max_size = _max_by_axis_pad([list(img.shape) for img in tensor_list], patch_size)
 
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
