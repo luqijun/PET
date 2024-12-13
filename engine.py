@@ -108,7 +108,8 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
 
     is_train_one = args.get("is_train_one", False)
     clear_cuda_cache = args.get('clear_cuda_cache', False)
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    eval_by_iters = args.get('eval_by_iters', -1)
+    for iter_num, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -145,6 +146,8 @@ def train_one_epoch(args, model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         if is_train_one:
+            break
+        if eval_by_iters > 0 and iter_num >= eval_by_iters - 1:
             break
 
     # gather the stats from all processes
@@ -307,7 +310,7 @@ def evaluate_split(args, model, data_loader, device, epoch=0, vis_dir=None):
     eval_count_list = [sum(eval_results[k].values()) for k in img_keys]
 
     image_points_num_filename = args.get('image_points_num_filename', None)
-    if image_points_num_filename and os.path.exists(image_points_num_filename):
+    if image_points_num_filename:
         gt_results_from_file = np.load(image_points_num_filename, allow_pickle=True).item()
         gt_count_list_from_file = [gt_results_from_file[k] for k in img_keys]
         # assert gt_count_list == gt_count_list_from_file
