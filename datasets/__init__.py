@@ -7,6 +7,7 @@ from .SHA_FgMask import build as build_sha_fg_mask
 from .SHA_General import build as build_sha_general
 from .SHA_General_Multi_Points import build as build_sha_general_multi_points
 from .SHB_General import build as build_shb_general
+from .SHB_General_Split import build as build_shb_general_split
 from .UCF_QNRF_General import build as build_ucf_qnrf_general
 
 
@@ -28,6 +29,8 @@ def build_dataset(image_set, args):
         return build_sha_general_multi_points(image_set, args)
     if args.dataset_file == 'SHB_General':
         return build_shb_general(image_set, args)
+    if args.dataset_file == 'SHB_General_Split':
+        return build_shb_general_split(image_set, args)
     # if args.dataset_file == 'UCF_QNRF':
     #     return build_ucf_qnrf(image_set, args)
     if args.dataset_file == 'JHU':
