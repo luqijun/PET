@@ -50,7 +50,8 @@ class WinDecoderTransformer(nn.Module):
 
         query_feats, query_embed, points_queries, qH, qW = pqs
 
-        is_train = 'train' in kwargs
+        div = kwargs.get('div', None)
+        is_train = 'train' in kwargs or 'div' not in kwargs
         dec_win_size_list = kwargs['dec_win_size_list']
         dec_win_dialation_list = kwargs['dec_win_dialation_list']
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
@@ -58,7 +59,6 @@ class WinDecoderTransformer(nn.Module):
         hs_intermediate_list = []
         for idx, (dec_win_size, stride) in enumerate(zip(dec_win_size_list, dec_win_dialation_list)):
             thrs = 0.5
-            div = kwargs['div']
 
             # B, C, H, W = query_feats.shape
             tgt_win, qHW = win_partion_with_dialated(query_feats, (stride, stride), dec_win_size)

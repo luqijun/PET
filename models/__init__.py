@@ -5,6 +5,8 @@ from .loss import build_criterion
 from .pet import build_pet
 from .pet_dialated import build_pet as build_pet_dialated
 from .pet_dialated_full_split_dec import build_pet as build_pet_dialated_full_split_dec
+from .pet_dialated_full_split_dec_ablation_dense import build_pet as build_pet_dialated_full_split_dec_ablation_dense
+from .pet_dialated_full_split_dec_ablation_sparse import build_pet as build_pet_dialated_full_split_dec_ablation_sparse
 from .pet_dialated_swin import build_pet as build_pet_dialated_swin
 from .pet_dialated_swin_enc import build_pet as build_pet_dialated_swin_enc
 from .pet_dialated_swin_enc_dec import build_pet as build_pet_dialated_swin_enc_dec
@@ -34,6 +36,10 @@ def build_model(args):
             model = build_pet_dialated(args, backbone, num_classes)
         case "pet_dialated_full_split_dec":
             model = build_pet_dialated_full_split_dec(args, backbone, num_classes)
+        case "pet_dialated_full_split_dec_ablation_sparse":
+            model = build_pet_dialated_full_split_dec_ablation_sparse(args, backbone, num_classes)
+        case "pet_dialated_full_split_dec_ablation_dense":
+            model = build_pet_dialated_full_split_dec_ablation_dense(args, backbone, num_classes)
         case "pet_dialated_swin":
             model = build_pet_dialated_swin(args, backbone, num_classes)
         case "pet_dialated_swin_enc":
