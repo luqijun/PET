@@ -18,9 +18,9 @@ clip_max_norm = 0.1
 lr = 0.0001
 epochs = 10000
 batch_size = 8
-eval_start = 10
+eval_start = 500
 eval_freq = 1
-eval_by_iters=50
+# eval_by_iters=50
 train_print_freq = 20
 val_print_freq = 50
 save_freq = 2
@@ -33,7 +33,7 @@ image_points_num_filename = './data/SHB/processed/min_edge_1024_split_512/test_d
 model = "pet_dialated_full_split_dec"
 backbone = "vgg16_bn"
 position_embedding = "sine"  # 'sine', 'learned', 'fourier'
-resume = f"outputs/SHB_General/pet_dialated_full_split_dec/{sub_save_dir}/pet_model_ntimes/checkpoint.pth"
+# resume = f"outputs/SHB_General_Split/pet_dialated_full_split_dec/{sub_save_dir}/pet_model_ntimes/checkpoint.pth"
 
 hidden_dim = 256
 dim_feedforward = 512
@@ -44,10 +44,10 @@ use_seg_head_attention = False
 use_seg_level_attention = False
 
 # encoder 结构
-enc_blocks = 4  # 为1时应用于所有的window
+enc_blocks = 3  # 为1时应用于所有的window
 enc_layers = 2
 enc_win_size_list = [(8, 8), (8, 4), (8, 4)]  # encoder window size
-enc_win_dialation_list = [2, 2, 1]  # 长度必须和enc_win_list一致
+enc_win_dialation_list = [4, 2, 1]  # 长度必须和enc_win_list一致
 
 # # # decoder结构 最好结果 48.4615 76.7999
 # dec_blocks = 2  # 为1时应用于所有的window
@@ -87,5 +87,5 @@ head_sizes_folder = "images_head_size_by_depth_var"
 seg_level_folder = "images_depth"
 seg_head_folder = "images_head_split_by_depth_var"
 seg_level_split_th = 0.2
-head_size_weight = 1.5  # 0.8
+head_size_weight = 2.0 # 1.5  # 0.8
 patch_size = 256
