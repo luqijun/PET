@@ -193,11 +193,18 @@ if __name__ == '__main__':
     # stacked_image = stack_images(image_paths, direction='vertical', spacing=10, bg_color="#ffffff")
     # stacked_image.save("head_size_comparison_cut_merge_en.jpg")
 
+    # image_paths = [
+    #     'depth_show_IMG_5.jpg',
+    #     'depth_show_IMG_29.jpg',
+    # ]  # 图像文件路径列表
+    # stacked_image = stack_images(image_paths, direction='vertical', spacing=10)
+    # stacked_image.save("depth_show_IMG_5_29_merge.jpg")
+
     image_paths = [
-        'depth_show_IMG_5.jpg',
-        'depth_show_IMG_29.jpg',
+        '/mnt/e/MyDocs/Code/Datasets/ShangHaiTech/ShanghaiTech/part_A_final/train_data/images/IMG_257.jpg',
+        '/mnt/e/MyDocs/Code/Datasets/ShangHaiTech/ShanghaiTech/part_A_final/train_data/images/IMG_20.jpg',
     ]  # 图像文件路径列表
-    stacked_image = stack_images(image_paths, direction='vertical', spacing=10)
-    stacked_image.save("depth_show_IMG_5_29_merge.jpg")
+    stacked_image = stack_images(image_paths, direction='horizontal', spacing=10, bg_color="#ffffff")
+    stacked_image.save("IMG_257_20_merge.jpg")
 
     print("merge sucess!")
