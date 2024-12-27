@@ -129,3 +129,10 @@ def points_queris_embed(samples, stride=8, src=None, **kwargs):
     query_feats = query_feats.view(bs, c, h, w)
 
     return query_feats, query_embed, points_queries, h, w
+
+
+def get_predict_count(out_feature, batch_index):
+    th = 0.5
+    out_dense_scores = torch.nn.functional.softmax(out_feature['pred_logits'][batch_index], -1)[..., 1]
+    valid = out_dense_scores > th
+    return valid.sum()
