@@ -61,7 +61,7 @@ dec_blocks = 1  # 为1时应用于所有的window
 dec_layers = 2
 dec_win_size_list_8x = [(8, 4)]
 dec_win_dialation_list_8x = [1]
-dec_win_size_list_4x = [(4, 2)]
+dec_win_size_list_4x = [(8, 4)]
 dec_win_dialation_list_4x = [1]
 
 # criterion
@@ -75,8 +75,8 @@ weight_dict = {
 }
 losses = ['labels', 'points']
 
-seg_head_loss_weight = 0.05
-seg_level_loss_weight = 0.05
+seg_head_loss_weight = 0.1
+seg_level_loss_weight = 0.1
 
 # dataset
 dataset_file = "JHU_General"

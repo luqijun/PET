@@ -67,8 +67,8 @@ weight_dict = {
 }
 losses = ['labels', 'points']
 
-seg_head_loss_weight = 0.05
-seg_level_loss_weight = 0.05
+seg_head_loss_weight = 0.1
+seg_level_loss_weight = 0.1
 
 # dataset
 dataset_file = "SHA_General"
