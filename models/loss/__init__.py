@@ -7,6 +7,7 @@ from .criterion_ignore_pt_loss_split import SetCriterion as SetCriterion_ignore_
 from .criterion_middle_merge import SetCriterion as SetCriterion_Middle_Merge
 from .criterion_mm_head_size import SetCriterion as SetCriterion_mm_head_size
 from .criterion_multi_points import SetCriterion as SetCriterion_multi_points
+from .criterion_only_split import SetCriterion as SetCriterion_only_split
 from .matcher import build_matcher
 from .matcher_4x1 import build_matcher as build_matcher_4x1
 from .matcher_head_size import build_matcher as build_matcher_head_size
@@ -45,11 +46,14 @@ def build_criterion(args):
         weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
         losses = ['labels', 'points']
 
-    criterion_name = args.get("criterion", "SetCriterion")
+    criterion_name = args.get("criterion", "criterion")
     match criterion_name:
-        case "SetCriterion":
+        case "criterion":
             criterion = SetCriterion(args.num_classes, matcher=matcher, weight_dict=weight_dict,
                                      eos_coef=args.eos_coef, losses=losses)
+        case "criterion_only_split":
+            criterion = SetCriterion_only_split(args.num_classes, matcher=matcher, weight_dict=weight_dict,
+                                                eos_coef=args.eos_coef, losses=losses)
         case "criterion_4x1":
             criterion = SetCriterion_4x1(args.num_classes, matcher=matcher, weight_dict=weight_dict,
                                          eos_coef=args.eos_coef, losses=losses)
