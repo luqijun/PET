@@ -227,8 +227,8 @@ class PET_Base(nn.Module, ABC):
             # level embeding
             kwargs['level_embed'] = self.level_embed[1]
             kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_8x  # [8, 4]
-            kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_8x
+            kwargs['dec_win_size_list'] = self.args.dec_win_size_list_4x  # [4, 2]
+            kwargs['dec_win_dialation_list'] = self.args.dec_win_dialation_list_4x
             outputs_dense = self.quadtree_dense(self.transformer_decoder, samples, features, context_info, **kwargs)
             outputs_dense['fea_shape'] = features['4x'].tensors.shape[-2:]
         else:
@@ -298,19 +298,9 @@ class PET_Base(nn.Module, ABC):
             tgt_scale_values = 1 / torch.cat([tgt['head_sizes'] for tgt in targets], dim=0)
 
             loss_scale_values = self.l1_loss(pred_scale_values, tgt_scale_values)
-            losses += loss_scale_values * 0.1
-            loss_dict['loss_scale_values'] = loss_scale_values * 0.1
-
-            # gt_scale_map = torch.stack([tgt['seg_level_map'] for tgt in targets], dim=0)
-            # # resize seg map
-            # if gt_scale_map.shape[-1] < pred_scale_map.shape[-1]:
-            #     gt_scale_map = F.interpolate(gt_scale_map, size=pred_scale_map.shape[-2:])
-            # else:
-            #     pred_scale_map = F.interpolate(pred_scale_map, size=gt_scale_map.shape[-2:])
-            #
-            # loss_scale_map = self.l1_loss(pred_scale_map.float().squeeze(1), gt_scale_map.float().squeeze(1))
-            # losses += loss_scale_map * 0.1
-            # loss_dict['loss_scale_map'] = loss_scale_map * 0.1
+            scale_loss_weight = self.args.get('scale_loss_weight', 0.1)
+            losses += loss_scale_values * scale_loss_weight
+            loss_dict['loss_scale_values'] = loss_scale_values * scale_loss_weight
 
         # seg head loss
         if self.use_seg_head:
@@ -324,8 +314,9 @@ class PET_Base(nn.Module, ABC):
                 pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
             # pred_seg_map = F.interpolate(pred_seg_map, size=gt_seg_map.shape[-2:])
             loss_seg_map = self.bce_loss(pred_seg_map.float().squeeze(1), gt_seg_map.float().squeeze(1))
-            losses += loss_seg_map * 0.1
-            loss_dict['loss_seg_head_map'] = loss_seg_map * 0.1
+            seg_head_loss_weight = self.args.get('seg_head_loss_weight', 0.1)
+            losses += loss_seg_map * seg_head_loss_weight
+            loss_dict['loss_seg_head_map'] = loss_seg_map * seg_head_loss_weight
 
         # splitter depth loss
         pred_seg_levels = outputs['split_map_raw']
@@ -338,7 +329,8 @@ class PET_Base(nn.Module, ABC):
         gt_seg_levels = torch.cat(gt_seg_levels, dim=0)
         loss_split_seg_level = F.binary_cross_entropy(pred_seg_levels.float().squeeze(1), gt_seg_levels)
         loss_split = loss_split_seg_level
-        losses += loss_split * 0.1
-        loss_dict['loss_seg_level_map'] = loss_split * 0.1
+        seg_level_loss_weight = self.args.get('seg_level_loss_weight', 0.1)
+        losses += loss_split * seg_level_loss_weight
+        loss_dict['loss_seg_level_map'] = loss_split * seg_level_loss_weight
 
         return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
