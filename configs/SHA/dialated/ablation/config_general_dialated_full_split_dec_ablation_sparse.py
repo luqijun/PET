@@ -25,7 +25,7 @@ eval_freq = 1
 model = "pet_dialated_full_split_dec_ablation_sparse"
 backbone = "vgg16_bn"
 position_embedding = "sine"  # 'sine', 'learned', 'fourier'
-resume = f"outputs/SHA_General/{model}/{sub_save_dir}/pet_model_ntimes/checkpoint.pth"
+# resume = f"outputs/SHA_General/{model}/{sub_save_dir}/pet_model_ntimes/checkpoint.pth"
 
 hidden_dim = 256
 dim_feedforward = 512

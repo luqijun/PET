@@ -46,7 +46,7 @@ dec_blocks = 2  # 为1时应用于所有的window
 dec_layers = 2
 dec_win_size_list_8x = [(8, 4), (8, 4)]
 dec_win_dialation_list_8x = [2, 1]
-dec_win_size_list_4x = [(4, 2), (4, 2)]
+dec_win_size_list_4x = [(8, 4), (8, 4)]
 dec_win_dialation_list_4x = [2, 1]
 
 # # decoder结构
