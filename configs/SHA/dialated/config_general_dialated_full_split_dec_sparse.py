@@ -1,7 +1,7 @@
 nproc_per_node = 1
 master_port = 10002
 
-num_workers = 2
+num_workers = 4
 syn_bn = 0
 world_size = 1
 seed = 42
@@ -18,7 +18,7 @@ clip_max_norm = 0.1
 lr = 0.0001
 epochs = 10000
 batch_size = 8
-eval_start = 100
+eval_start = 600
 eval_freq = 1
 warmup_ep = 10
 
@@ -42,21 +42,17 @@ enc_layers = 2
 enc_win_size_list = [(16, 8), (8, 4), (8, 4)]  # encoder window size
 enc_win_dialation_list = [2, 2, 1]  # 长度必须和enc_win_list一致
 
-# # decoder结构 最好结果 48.4615 76.7999
-# dec_blocks = 2  # 为1时应用于所有的window
-# dec_layers = 2
-# dec_win_size_list_8x = [(8, 4), (8, 4)]
-# dec_win_dialation_list_8x = [2, 1]
-# dec_win_size_list_4x = [(4, 2), (4, 2)]
-# dec_win_dialation_list_4x = [2, 1]
-
-# # decoder结构
-dec_blocks = 1  # 为1时应用于所有的window
+# decoder结构 最好结果 48.4615 76.7999
+dec_blocks = 2  # 为1时应用于所有的window
 dec_layers = 2
-dec_win_size_list_8x = [(8, 4)]
-dec_win_dialation_list_8x = [1]
-dec_win_size_list_4x = [(8, 4)]
-dec_win_dialation_list_4x = [1]
+dec_win_size_list_8x = [(8, 4), (8, 4)]
+dec_win_dialation_list_8x = [2, 1]
+
+# # # decoder结构
+# dec_blocks = 1  # 为1时应用于所有的window
+# dec_layers = 2
+# dec_win_size_list_8x = [(8, 4)]
+# dec_win_dialation_list_8x = [1]
 
 # criterion
 criterion = "criterion_multi_points"
@@ -80,5 +76,5 @@ output_dir = "pet_model"
 head_sizes_folder = "images_head_size_by_depth_var"
 seg_level_folder = "images_depth"
 seg_head_folder = "images_head_split_by_depth_var"
-seg_level_split_th = 0.4  # 0.2
+seg_level_split_th = 0.2  # 0.4  # 0.2
 head_size_weight = 1.5  # 0.8
